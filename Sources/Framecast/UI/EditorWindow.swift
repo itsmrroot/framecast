@@ -56,6 +56,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 self.model.splitAtPlayhead(); return nil
             case kVK_ANSI_Z:
                 self.model.addZoom(at: self.model.sourceTime); return nil
+            case kVK_ANSI_B:
+                self.model.addEffect(.blur); return nil
+            case kVK_ANSI_T:
+                self.model.addEffect(.text); return nil
             case kVK_Delete, kVK_ForwardDelete:
                 self.model.deleteSelection(); return nil
             case kVK_LeftArrow:
@@ -99,7 +103,7 @@ struct EditorView: View {
             }
             Rectangle().fill(Theme.border).frame(height: 1)
             TimelineView(model: model)
-                .frame(height: 230)
+                .frame(height: 262)
                 .background(Theme.panel)
         }
         .background(Theme.bg)
@@ -267,6 +271,20 @@ private struct PreviewArea: View {
 private struct TransportBar: View {
     @ObservedObject var model: EditorModel
 
+    private func saveFrame() {
+        model.player.pause()
+        Task {
+            guard let image = await model.currentFrameImage() else { NSSound.beep(); return }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")) frame.png"
+            panel.allowedContentTypes = [.png]
+            panel.directoryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            guard panel.runModal() == .OK, let url = panel.url,
+                  let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
+            try? data.write(to: url)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Text(formatTime(model.compTime, fraction: true))
@@ -292,6 +310,9 @@ private struct TransportBar: View {
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.textDim)
                 .frame(width: 64, alignment: .leading)
+
+            IconButton(icon: "camera", help: "Save this frame as an image") { saveFrame() }
+                .disabled(!model.isReady)
         }
         .frame(height: 54)
         .frame(maxWidth: .infinity)

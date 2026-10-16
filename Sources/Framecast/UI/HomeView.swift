@@ -1,6 +1,7 @@
 import SwiftUI
 import ScreenCaptureKit
 import AppKit
+import AVFoundation
 
 struct HomeView: View {
     @ObservedObject private var settings = RecorderSettings.shared
@@ -33,6 +34,7 @@ private struct RecordPanel: View {
     @ObservedObject var coordinator: RecordingCoordinator
     @ObservedObject var catalog: SourceCatalog
     @State private var showWindowPicker = false
+    @State private var keysTrusted = KeystrokeRecorder.isTrusted
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -66,6 +68,18 @@ private struct RecordPanel: View {
                                   devices: catalog.cameras, selection: $settings.cameraID)
                         deviceRow(icon: "mic", label: "Microphone", isOn: $settings.micEnabled,
                                   devices: catalog.microphones, selection: $settings.micID)
+                        if settings.micEnabled {
+                            Button {
+                                AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+                            } label: {
+                                Label("Mic Mode (Voice Isolation)…", systemImage: "waveform.badge.mic")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.accent)
+                            .padding(.leading, 24)
+                            .help("Choose Voice Isolation to remove background noise from your microphone")
+                        }
                         ToggleRow(label: "System audio", icon: "speaker.wave.2", isOn: $settings.systemAudio)
                     }
 
@@ -94,6 +108,21 @@ private struct RecordPanel: View {
                         }
                         ToggleRow(label: "Automatic zoom on clicks", icon: "plus.magnifyingglass", isOn: $settings.autoZoom)
                         ToggleRow(label: "Hide desktop icons", icon: "eye.slash", isOn: $settings.hideDesktopIcons)
+                        ToggleRow(label: "Record keystrokes", icon: "keyboard", isOn: Binding(get: { settings.recordKeystrokes }, set: { on in
+                            settings.recordKeystrokes = on
+                            if on && !KeystrokeRecorder.isTrusted { KeystrokeRecorder.requestTrust() }
+                            keysTrusted = KeystrokeRecorder.isTrusted
+                        }))
+                        if settings.recordKeystrokes && !keysTrusted {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Allow Framecast under Accessibility so it can show your shortcuts. Password fields are never captured.")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Button("Open Accessibility Settings") { NSWorkspace.shared.open(KeystrokeRecorder.settingsURL) }
+                                    .buttonStyle(SecondaryButtonStyle())
+                            }
+                            .padding(.leading, 24)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -119,6 +148,9 @@ private struct RecordPanel: View {
                     .foregroundStyle(Theme.textFaint)
             }
             .padding(20)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            keysTrusted = KeystrokeRecorder.isTrusted
         }
         .sheet(isPresented: $showWindowPicker) {
             WindowPickerSheet(catalog: catalog, settings: settings, isPresented: $showWindowPicker)

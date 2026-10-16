@@ -26,13 +26,18 @@ final class RenderModel: @unchecked Sendable {
     let aspect: CGFloat
     let screenTrackID: CMPersistentTrackID
     let webcamTrackID: CMPersistentTrackID?
+    let effects: [EffectSegment]
+    let captions: [CaptionCue]
+    /// Keystroke badges to show: each label is visible from `start` until `end`.
+    let keyItems: [(start: Double, end: Double, label: String)]
 
     private let lock = NSLock()
     private var backgroundCache: (CGSize, CIImage)?
 
     init(style: Style, info: RecordingInfo, editMap: EditMap, zooms: [ZoomSegment], cursorPath: CursorPath?,
          cursorTrack: CursorTrack, cursorImages: [String: CIImage],
-         screenTrackID: CMPersistentTrackID, webcamTrackID: CMPersistentTrackID?) {
+         screenTrackID: CMPersistentTrackID, webcamTrackID: CMPersistentTrackID?,
+         effects: [EffectSegment] = [], captions: [CaptionCue] = [], keys: [KeyEvent] = []) {
         self.style = style
         sourceSize = CGSize(width: info.pixelWidth, height: info.pixelHeight)
         pointSize = CGSize(width: info.pointWidth, height: info.pointHeight)
@@ -45,6 +50,9 @@ final class RenderModel: @unchecked Sendable {
         self.screenTrackID = screenTrackID
         self.webcamTrackID = webcamTrackID
         aspect = style.aspect.value(source: sourceSize, padding: style.padding)
+        self.effects = effects.sorted { $0.start < $1.start }
+        self.captions = style.showCaptions ? captions.sorted { $0.start < $1.start } : []
+        keyItems = RenderModel.buildKeyItems(keys, mode: style.keystrokes)
 
         // Layout at a reference size to know how much of the screen the frame shows.
         let ref = CGSize(width: 1000 * aspect, height: 1000)
@@ -130,6 +138,84 @@ final class RenderModel: @unchecked Sendable {
             if let img = cursorImages[c.id] { return (img, info) }
         }
         return (CursorArt.arrowImage, CursorArt.arrowInfo)
+    }
+
+    // MARK: Effects, captions, keystrokes
+
+    /// How visible an effect is at time t (0...1), with short fades at both ends.
+    static func envelope(_ e: EffectSegment, at t: Double) -> Double {
+        guard t >= e.start, t <= e.end else { return 0 }
+        let fade = max(0.01, min(0.3, e.duration / 4))
+        return smootherstep((t - e.start) / fade) * smootherstep((e.end - t) / fade)
+    }
+
+    func activeEffects(at t: Double) -> [(EffectSegment, Double)] {
+        var out: [(EffectSegment, Double)] = []
+        for e in effects {
+            if e.start > t { break }
+            let a = RenderModel.envelope(e, at: t)
+            if a > 0.001 { out.append((e, a)) }
+        }
+        return out
+    }
+
+    /// Strongest envelope among active effects of a kind.
+    func amount(of kind: EffectKind, at t: Double) -> Double {
+        var best = 0.0
+        for e in effects where e.kind == kind {
+            if e.start > t { break }
+            best = max(best, RenderModel.envelope(e, at: t))
+        }
+        return best
+    }
+
+    func caption(at t: Double) -> CaptionCue? {
+        var lo = 0, hi = captions.count - 1, idx = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if captions[mid].start <= t { idx = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        guard idx >= 0, t < captions[idx].end else { return nil }
+        return captions[idx]
+    }
+
+    /// The keystroke label at time t and its opacity.
+    func keystroke(at t: Double) -> (String, Double)? {
+        var lo = 0, hi = keyItems.count - 1, idx = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if keyItems[mid].start <= t { idx = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        guard idx >= 0 else { return nil }
+        let item = keyItems[idx]
+        guard t < item.end else { return nil }
+        return (item.label, min(1, (item.end - t) / 0.25))
+    }
+
+    private static func buildKeyItems(_ keys: [KeyEvent], mode: KeystrokeMode) -> [(start: Double, end: Double, label: String)] {
+        guard mode != .off else { return [] }
+        let hold = 1.4
+        var items: [(start: Double, end: Double, label: String)] = []
+        var typing = ""
+        var lastTyped = -10.0
+        for k in keys.sorted(by: { $0.t < $1.t }) {
+            var label: String
+            if k.isShortcut && !(mode == .all && k.label == "⌫" && !typing.isEmpty && k.t - lastTyped < 1.2) {
+                label = k.label
+                typing = ""
+            } else if mode == .all {
+                if k.t - lastTyped > 1.2 { typing = "" }
+                if k.label == "⌫" { typing = String(typing.dropLast()) } else { typing += k.label }
+                if typing.count > 28 { typing = "…" + typing.suffix(27) }
+                lastTyped = k.t
+                label = typing.isEmpty ? "⌫" : typing
+            } else {
+                continue
+            }
+            if !items.isEmpty, items[items.count - 1].end > k.t { items[items.count - 1].end = k.t }
+            items.append((k.t, k.t + hold, label))
+        }
+        return items
     }
 
     func pressScale(at t: Double) -> CGFloat {

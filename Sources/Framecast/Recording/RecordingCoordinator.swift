@@ -33,6 +33,7 @@ final class RecordingCoordinator: ObservableObject {
     private var screen: ScreenCaptureSession?
     private var camMic: CameraMicCapture?
     private var cursor: CursorRecorder?
+    private var keys: KeystrokeRecorder?
     private var folder: URL?
     private var targetScreen: NSScreen?
     private var info: RecordingInfo?
@@ -74,6 +75,7 @@ final class RecordingCoordinator: ObservableObject {
         clock.begin()
         screen?.beginRecording()
         cursor?.start()
+        keys?.start()
         phase = .recording
         controlBar.show(on: targetScreen ?? NSScreen.main!, coordinator: self)
         ticker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -176,6 +178,9 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         cursor = CursorRecorder(clock: clock, captureRect: captureRect, folder: folder)
+        if settings.recordKeystrokes && KeystrokeRecorder.isTrusted {
+            keys = KeystrokeRecorder(clock: clock)
+        }
 
         info = RecordingInfo(duration: 0, pointWidth: pointSize.width, pointHeight: pointSize.height,
                              pixelWidth: width, pixelHeight: height,
@@ -207,6 +212,7 @@ final class RecordingCoordinator: ObservableObject {
 
         let duration = clock.stop()
         let track = cursor?.stop() ?? CursorTrack()
+        let keyEvents = keys?.stop() ?? []
         await screen?.finish(duration: duration)
         await camMic?.finish(duration: duration)
 
@@ -217,6 +223,7 @@ final class RecordingCoordinator: ObservableObject {
         info.hasMic = info.hasMic && fm.fileExists(atPath: folder.appendingPathComponent(ProjectFiles.mic).path)
 
         ProjectIO.saveCursor(track, folder: folder)
+        if !keyEvents.isEmpty { ProjectIO.saveKeys(keyEvents, folder: folder) }
         let style = PresetStore.shared.defaultStyle
         let zooms = settings.autoZoom
             ? ZoomGenerator.generate(from: track.clicks, duration: info.duration, scale: style.defaultZoomScale)
@@ -242,6 +249,7 @@ final class RecordingCoordinator: ObservableObject {
             controlBar.hide()
             clock?.stop()
             _ = cursor?.stop()
+            _ = keys?.stop()
             await screen?.cancel()
             camMic?.cancel()
             await teardown(deleteFolder: true)
@@ -258,6 +266,7 @@ final class RecordingCoordinator: ObservableObject {
             controlBar.hide()
             clock?.stop()
             _ = cursor?.stop()
+            _ = keys?.stop()
             await screen?.cancel()
             camMic?.cancel()
             await teardown(deleteFolder: true)
@@ -280,6 +289,7 @@ final class RecordingCoordinator: ObservableObject {
         screen = nil
         camMic = nil
         cursor = nil
+        keys = nil
         clock = nil
         folder = nil
         info = nil

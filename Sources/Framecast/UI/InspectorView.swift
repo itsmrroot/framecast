@@ -3,9 +3,9 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case background, cursor, zoom, camera, audio
+    case background, cursor, zoom, camera, audio, captions
     var id: String { rawValue }
-    var label: String { rawValue.capitalized }
+    var label: String { self == .background ? "Style" : rawValue.capitalized }
     var icon: String {
         switch self {
         case .background: return "photo.on.rectangle"
@@ -13,6 +13,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .zoom: return "plus.magnifyingglass"
         case .camera: return "video"
         case .audio: return "speaker.wave.2"
+        case .captions: return "captions.bubble"
         }
     }
 }
@@ -27,6 +28,8 @@ struct InspectorView: View {
                 ZoomDetail(model: model, zoom: z)
             } else if let c = model.selectedClip {
                 ClipDetail(model: model, clip: c)
+            } else if let e = model.selectedEffect {
+                EffectDetail(model: model, effect: e)
             } else {
                 tabBar
                 Rectangle().fill(Theme.border).frame(height: 1)
@@ -38,6 +41,7 @@ struct InspectorView: View {
                         case .zoom: ZoomTab(model: model)
                         case .camera: CameraTab(model: model)
                         case .audio: AudioTab(model: model)
+                        case .captions: CaptionsTab(model: model)
                         }
                     }
                     .padding(16)
@@ -251,6 +255,20 @@ private struct CursorTab: View {
                 PillPicker(options: ClickEffect.allCases,
                            selection: model.styleBinding(\.clickEffect, key: "click"), label: \.label)
                 Text("\(model.cursorTrack.clicks.count) clicks recorded")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            }
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Keystrokes")
+            if model.keys.isEmpty {
+                Text("No keystrokes were recorded. Turn on “Record keystrokes” before recording to show shortcuts on screen.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                PillPicker(options: KeystrokeMode.allCases, selection: model.styleBinding(\.keystrokes, key: "keys"), label: \.label)
+                LabeledSlider(label: "Size", value: model.styleBinding(\.keystrokeSize, key: "keySize"), range: 0.6...2,
+                              format: { String(format: "%.1f×", $0) })
+                Text("\(model.keys.filter(\.isShortcut).count) shortcuts · \(model.keys.count) key presses recorded")
                     .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
             }
         }
@@ -474,6 +492,12 @@ private struct CameraTab: View {
                     .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
             } else {
                 ToggleRow(label: "Show camera", isOn: model.styleBinding(\.camera.visible, key: "camVis"))
+                Text("Background").font(.system(size: 12))
+                PillPicker(options: CameraBackground.allCases, selection: model.styleBinding(\.camera.background, key: "camBg"), label: \.label)
+                if model.doc.style.camera.background == .remove {
+                    Text("Your cut-out floats over the recording. Works best with good lighting.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                }
                 Text("Shape").font(.system(size: 12))
                 PillPicker(options: CameraShape.allCases, selection: model.styleBinding(\.camera.shape, key: "camShape"), label: \.label)
                 LabeledSlider(label: "Size", value: model.styleBinding(\.camera.size, key: "camSize"), range: 0.1...0.5,
@@ -483,6 +507,20 @@ private struct CameraTab: View {
                 ToggleRow(label: "Mirror", isOn: model.styleBinding(\.camera.mirror, key: "camMirror"))
                 ToggleRow(label: "Shrink while zoomed", isOn: model.styleBinding(\.camera.shrinkOnZoom, key: "camShrink"))
                 ToggleRow(label: "Border", isOn: model.styleBinding(\.camera.border, key: "camBorder"))
+            }
+        }
+        if model.doc.info.hasWebcam {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Layouts")
+                Text("Show the camera full screen for an intro or outro, or hide it for part of the video.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button { model.addEffect(.cameraFull) } label: { Label("Full screen", systemImage: EffectKind.cameraFull.icon) }
+                        .buttonStyle(SecondaryButtonStyle())
+                    Button { model.addEffect(.cameraHidden) } label: { Label("Hide", systemImage: EffectKind.cameraHidden.icon) }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
             }
         }
     }
@@ -546,5 +584,307 @@ private struct AudioTab: View {
             Text("Sped-up clips keep their natural pitch.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
         }
+    }
+}
+
+// MARK: - Effect
+
+private struct EffectDetail: View {
+    @ObservedObject var model: EditorModel
+    let effect: EffectSegment
+
+    private func binding<T>(_ kp: WritableKeyPath<EffectSegment, T>, key: String) -> Binding<T> {
+        Binding(get: { effect[keyPath: kp] },
+                set: { v in model.updateEffect(effect.id, coalesce: "\(key)-\(effect.id)") { $0[keyPath: kp] = v } })
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            DetailHeader(title: effect.kind.label, icon: effect.kind.icon, color: TimelineView.effectColor(effect.kind)) { model.selection = .none }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    switch effect.kind {
+                    case .blur:
+                        RegionPicker(model: model, effect: effect, tint: TimelineView.effectColor(.blur))
+                        PillPicker(options: [false, true], selection: binding(\.pixelate, key: "pix"), label: { $0 ? "Pixelate" : "Blur" })
+                        LabeledSlider(label: "Strength", value: binding(\.intensity, key: "int"), range: 0.1...1,
+                                      format: { "\(Int($0 * 100))%" })
+                        note("Hide passwords, emails or customer data. The blur follows the zoom.")
+                    case .spotlight:
+                        RegionPicker(model: model, effect: effect, tint: TimelineView.effectColor(.spotlight))
+                        LabeledSlider(label: "Dim the rest", value: binding(\.intensity, key: "int"), range: 0.1...0.9,
+                                      format: { "\(Int($0 * 100))%" })
+                        note("Darkens everything except the highlighted area to draw attention to it.")
+                    case .text:
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Text").font(.system(size: 12))
+                            TextField("Title", text: binding(\.text, key: "text"), axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .lineLimit(1...4)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Position").font(.system(size: 12))
+                            PillPicker(options: TextPlacement.allCases, selection: binding(\.placement, key: "place"), label: \.label)
+                        }
+                        LabeledSlider(label: "Size", value: binding(\.textSize, key: "tsize"), range: 0.5...2,
+                                      format: { String(format: "%.1f×", $0) })
+                    case .hideCursor:
+                        note("The cursor and click effects fade out for this part of the video.")
+                    case .cameraFull:
+                        note("The camera grows to fill the frame, which works well for intros and outros. It returns to the bubble when this ends.")
+                    case .cameraHidden:
+                        note("The camera fades out for this part of the video.")
+                    }
+
+                    HStack {
+                        Text("Starts \(formatTime(effect.start, fraction: true))")
+                        Spacer()
+                        Text("Lasts \(String(format: "%.1fs", effect.duration))")
+                    }
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.textDim)
+                    HStack {
+                        Button { model.seek(source: effect.start) } label: { Label("Go to", systemImage: "arrow.right.to.line") }
+                            .buttonStyle(SecondaryButtonStyle())
+                        Button { model.duplicateEffect(effect.id) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                            .buttonStyle(SecondaryButtonStyle())
+                        Spacer()
+                        Button(role: .destructive) { model.deleteSelection() } label: { Label("Delete", systemImage: "trash") }
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
+                }
+                .padding(16)
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Shows a frame of the recording; drag to draw the effect's area, or drag inside it to move it.
+private struct RegionPicker: View {
+    @ObservedObject var model: EditorModel
+    let effect: EffectSegment
+    let tint: Color
+    @State private var frame: CGImage?
+    @State private var dragMode: DragMode?
+
+    private enum DragMode { case draw(CGPoint), move(CGRect) }
+
+    var body: some View {
+        let aspect = CGFloat(model.doc.info.pixelWidth) / CGFloat(max(1, model.doc.info.pixelHeight))
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Area").font(.system(size: 12))
+            GeometryReader { geo in
+                let W = geo.size.width, H = geo.size.height
+                ZStack(alignment: .topLeading) {
+                    if let frame {
+                        Image(decorative: frame, scale: 1).resizable()
+                    } else {
+                        Rectangle().fill(Color.white.opacity(0.06))
+                    }
+                    if effect.kind == .spotlight {
+                        Rectangle().fill(Color.black.opacity(0.5))
+                            .mask {
+                                Rectangle().overlay {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .frame(width: effect.w * W, height: effect.h * H)
+                                        .position(x: (effect.x + effect.w / 2) * W, y: (effect.y + effect.h / 2) * H)
+                                        .blendMode(.destinationOut)
+                                }
+                                .compositingGroup()
+                            }
+                    }
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(effect.kind == .blur ? tint.opacity(0.35) : Color.clear)
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tint, lineWidth: 2))
+                        .frame(width: max(2, effect.w * W), height: max(2, effect.h * H))
+                        .offset(x: effect.x * W, y: effect.y * H)
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        let p = CGPoint(x: clamp(v.location.x / W, 0, 1), y: clamp(v.location.y / H, 0, 1))
+                        if dragMode == nil {
+                            let start = CGPoint(x: v.startLocation.x / W, y: v.startLocation.y / H)
+                            dragMode = effect.region.contains(start) ? .move(effect.region) : .draw(start)
+                        }
+                        switch dragMode {
+                        case .draw(let s):
+                            let r = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
+                            guard r.width > 0.01, r.height > 0.01 else { return }
+                            set(r)
+                        case .move(let r0):
+                            let dx = v.translation.width / W, dy = v.translation.height / H
+                            set(CGRect(x: clamp(r0.minX + dx, 0, 1 - r0.width), y: clamp(r0.minY + dy, 0, 1 - r0.height),
+                                       width: r0.width, height: r0.height))
+                        case nil: break
+                        }
+                    }
+                    .onEnded { _ in dragMode = nil })
+            }
+            .aspectRatio(aspect, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
+            .task(id: effect.id) { frame = await model.rawFrame(at: effect.start + min(0.5, effect.duration / 2)) }
+            Text("Drag to draw the area, or drag inside it to move it.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+        }
+    }
+
+    private func set(_ r: CGRect) {
+        model.updateEffect(effect.id, coalesce: "region-\(effect.id)") {
+            $0.x = Double(r.minX); $0.y = Double(r.minY); $0.w = Double(r.width); $0.h = Double(r.height)
+        }
+    }
+}
+
+// MARK: - Captions
+
+private struct CaptionsTab: View {
+    @ObservedObject var model: EditorModel
+    @State private var locale = Locale.current
+    @State private var working = false
+    @State private var progress = 0.0
+    @State private var error: String?
+    @State private var task: Task<Void, Never>?
+
+    private var hasAudio: Bool { model.doc.info.hasMic || model.doc.info.hasSystemAudio }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Captions")
+            if !hasAudio {
+                Text("This recording has no audio to transcribe. Turn on the microphone to narrate your next recording.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Transcribe your narration into captions on your Mac. Audio never leaves your computer when the language supports on-device recognition.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("Language", selection: $locale) {
+                    ForEach(Transcriber.supportedLocales, id: \.identifier) { l in
+                        Text(Transcriber.name(for: l)).tag(l)
+                    }
+                }
+                .font(.system(size: 12))
+                .disabled(working)
+                if working {
+                    ProgressView(value: progress).tint(Theme.accent)
+                    HStack {
+                        Text("Transcribing… \(Int(progress * 100))%").font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                        Spacer()
+                        Button("Cancel") { task?.cancel() }.buttonStyle(SecondaryButtonStyle())
+                    }
+                } else {
+                    Button {
+                        generate()
+                    } label: {
+                        Label(model.doc.captions.isEmpty ? "Generate Captions" : "Regenerate Captions", systemImage: "waveform")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .onAppear {
+            if !Transcriber.supportedLocales.contains(where: { $0.identifier == locale.identifier }) {
+                locale = Transcriber.supportedLocales.first { $0.language.languageCode == Locale.current.language.languageCode }
+                    ?? Locale(identifier: "en-US")
+            }
+        }
+
+        if !model.doc.captions.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Display")
+                ToggleRow(label: "Show captions in video", isOn: model.styleBinding(\.showCaptions, key: "showCap"))
+                LabeledSlider(label: "Size", value: model.styleBinding(\.captionSize, key: "capSize"), range: 0.6...2,
+                              format: { String(format: "%.1f×", $0) })
+                HStack {
+                    Button { exportSRT() } label: { Label("Export .srt", systemImage: "square.and.arrow.up") }
+                        .buttonStyle(SecondaryButtonStyle())
+                    Spacer()
+                    Button(role: .destructive) { model.setCaptions([]) } label: { Label("Remove all", systemImage: "trash") }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "\(model.doc.captions.count) lines")
+                ForEach(model.doc.captions.sorted(by: { $0.start < $1.start })) { cue in
+                    CaptionRow(model: model, cue: cue)
+                }
+            }
+        }
+    }
+
+    private func generate() {
+        error = nil
+        working = true
+        progress = 0
+        let folder = model.folder, info = model.doc.info, loc = locale
+        task = Task {
+            do {
+                let cues = try await Transcriber.transcribe(folder: folder, info: info, locale: loc) { p in
+                    DispatchQueue.main.async { progress = p }
+                }
+                if cues.isEmpty { error = "No speech was found in the audio." } else { model.setCaptions(cues) }
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+            working = false
+        }
+    }
+
+    private func exportSRT() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")).srt"
+        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
+        panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? model.srt().write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
+private struct CaptionRow: View {
+    @ObservedObject var model: EditorModel
+    let cue: CaptionCue
+    @State private var text = ""
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button { model.seek(source: cue.start) } label: {
+                Text(formatTime(cue.start, fraction: true))
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("Go to this line")
+            TextField("", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .lineLimit(1...3)
+                .onSubmit { commit() }
+                .onChange(of: text) { _, _ in commit() }
+            Button { model.deleteCaption(cue.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textFaint)
+                .help("Delete line")
+        }
+        .padding(.vertical, 4)
+        .onAppear { text = cue.text }
+        .onChange(of: cue.text) { _, v in if v != text { text = v } }
+    }
+
+    private func commit() {
+        if text != cue.text { model.updateCaption(cue.id, text: text) }
     }
 }

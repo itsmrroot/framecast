@@ -38,6 +38,7 @@ final class RecorderSettings: ObservableObject {
     @Published var hideDesktopIcons: Bool { didSet { d.set(hideDesktopIcons, forKey: "rec.hideDesktop") } }
     @Published var fps: Int { didSet { d.set(fps, forKey: "rec.fps") } }
     @Published var autoZoom: Bool { didSet { d.set(autoZoom, forKey: "rec.autoZoom") } }
+    @Published var recordKeystrokes: Bool { didSet { d.set(recordKeystrokes, forKey: "rec.keys") } }
 
     private init() {
         d.register(defaults: [
@@ -59,6 +60,7 @@ final class RecorderSettings: ObservableObject {
         hideDesktopIcons = d.bool(forKey: "rec.hideDesktop")
         fps = d.integer(forKey: "rec.fps")
         autoZoom = d.bool(forKey: "rec.autoZoom")
+        recordKeystrokes = d.bool(forKey: "rec.keys")
     }
 }
 

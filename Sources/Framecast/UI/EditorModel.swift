@@ -7,20 +7,23 @@ import SwiftUI
 
 @MainActor
 final class EditorModel: ObservableObject {
-    enum Selection: Equatable { case none, zoom(UUID), clip(UUID) }
+    enum Selection: Equatable { case none, zoom(UUID), clip(UUID), effect(UUID) }
     enum EditScope { case timeline, render, meta }
 
-    private struct Snapshot: Equatable {
+    fileprivate struct Snapshot: Equatable {
         var name: String
         var clips: [Clip]
         var zooms: [ZoomSegment]
         var style: Style
+        var effects: [EffectSegment]
+        var captions: [CaptionCue]
     }
 
     let folder: URL
     @Published private(set) var doc: ProjectDocument
     let cursorTrack: CursorTrack
     let cursorImages: [String: CIImage]
+    let keys: [KeyEvent]
 
     @Published private(set) var isReady = false
     @Published private(set) var loadError: String?
@@ -59,6 +62,7 @@ final class EditorModel: ObservableObject {
         let track = ProjectIO.loadCursor(folder: folder)
         cursorTrack = track
         cursorImages = CursorArt.loadImages(folder: folder, track: track)
+        keys = ProjectIO.loadKeys(folder: folder)
         editMap = EditMap(clips: doc.clips)
         outputAspect = doc.style.aspect.value(source: CGSize(width: doc.info.pixelWidth, height: doc.info.pixelHeight), padding: doc.style.padding)
 
@@ -104,13 +108,13 @@ final class EditorModel: ObservableObject {
 
     // MARK: - Editing
 
-    private var snapshot: Snapshot { Snapshot(name: doc.name, clips: doc.clips, zooms: doc.zooms, style: doc.style) }
+    private var snapshot: Snapshot { Snapshot(doc) }
 
     func edit(_ scope: EditScope, coalesce key: String? = nil, _ change: (inout ProjectDocument) -> Void) {
         let before = snapshot
         var d = doc
         change(&d)
-        let after = Snapshot(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style)
+        let after = Snapshot(d)
         guard after != before else { return }
         let now = Date()
         let coalescing = key != nil && key == lastCoalesceKey && now.timeIntervalSince(lastEditTime) < 1.5
@@ -150,9 +154,12 @@ final class EditorModel: ObservableObject {
         doc.clips = s.clips
         doc.zooms = s.zooms
         doc.style = s.style
+        doc.effects = s.effects
+        doc.captions = s.captions
         lastCoalesceKey = nil
         if case .zoom(let id) = selection, !doc.zooms.contains(where: { $0.id == id }) { selection = .none }
         if case .clip(let id) = selection, !doc.clips.contains(where: { $0.id == id }) { selection = .none }
+        if case .effect(let id) = selection, !doc.effects.contains(where: { $0.id == id }) { selection = .none }
         apply(timelineChanged ? .timeline : .render)
         updateUndoState()
         scheduleSave()
@@ -201,7 +208,8 @@ final class EditorModel: ObservableObject {
     func makeRenderModel(for built: BuiltComposition) -> RenderModel {
         RenderModel(style: doc.style, info: doc.info, editMap: editMap, zooms: doc.zooms,
                     cursorPath: cursorPath(), cursorTrack: cursorTrack, cursorImages: cursorImages,
-                    screenTrackID: built.screenTrackID, webcamTrackID: doc.style.camera.visible ? built.webcamTrackID : nil)
+                    screenTrackID: built.screenTrackID, webcamTrackID: doc.style.camera.visible ? built.webcamTrackID : nil,
+                    effects: doc.effects, captions: doc.captions, keys: keys)
     }
 
     private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
@@ -311,6 +319,9 @@ final class EditorModel: ObservableObject {
             guard doc.clips.count > 1 else { NSSound.beep(); return }
             edit(.timeline) { $0.clips.removeAll { $0.id == id } }
             selection = .none
+        case .effect(let id):
+            edit(.render) { $0.effects.removeAll { $0.id == id } }
+            selection = .none
         case .none:
             break
         }
@@ -378,6 +389,116 @@ final class EditorModel: ObservableObject {
         selection = .none
     }
 
+    // MARK: Effects
+
+    func addEffect(_ kind: EffectKind, at source: Double? = nil) {
+        let start = clamp(source ?? sourceTime, 0, max(0, sourceDuration - 0.5))
+        let length = kind == .text ? 3.0 : (kind.needsCamera ? 4.0 : 3.0)
+        var e = EffectSegment(kind: kind, start: start, end: min(sourceDuration, start + length))
+        if kind == .text, doc.effects.filter({ $0.kind == .text }).isEmpty { e.text = doc.name }
+        edit(.render) { $0.effects.append(e) }
+        selection = .effect(e.id)
+    }
+
+    func updateEffect(_ id: UUID, coalesce: String? = nil, _ change: (inout EffectSegment) -> Void) {
+        edit(.render, coalesce: coalesce) { d in
+            guard let i = d.effects.firstIndex(where: { $0.id == id }) else { return }
+            change(&d.effects[i])
+        }
+    }
+
+    func duplicateEffect(_ id: UUID) {
+        guard var e = doc.effects.first(where: { $0.id == id }) else { return }
+        e.id = UUID()
+        let len = e.duration
+        e.start = min(e.end, max(0, sourceDuration - len))
+        e.end = min(sourceDuration, e.start + len)
+        edit(.render) { $0.effects.append(e) }
+        selection = .effect(e.id)
+    }
+
+    var selectedEffect: EffectSegment? {
+        if case .effect(let id) = selection { return doc.effects.first { $0.id == id } }
+        return nil
+    }
+
+    // MARK: Smart speed
+
+    enum SmartSpeed { case idle, typing }
+
+    /// Finds quiet stretches (no cursor movement, clicks or keys) or bursts of typing.
+    func smartRanges(_ kind: SmartSpeed) -> [(Double, Double)] {
+        switch kind {
+        case .idle: return ActivityAnalyzer.idleRanges(cursor: cursorTrack, keys: keys, duration: sourceDuration)
+        case .typing: return ActivityAnalyzer.typingRanges(keys: keys)
+        }
+    }
+
+    /// Applies a speed to the given source ranges, or cuts them when `speed` is nil.
+    @discardableResult
+    func applySmartSpeed(_ kind: SmartSpeed, speed: Double?) -> Int {
+        let ranges = smartRanges(kind)
+        guard !ranges.isEmpty else { NSSound.beep(); return 0 }
+        edit(.timeline) { d in
+            d.clips = ClipOps.apply(ranges, to: d.clips, speed: speed)
+        }
+        selection = .none
+        return ranges.count
+    }
+
+    func resetSpeeds() {
+        edit(.timeline) { d in d.clips = d.clips.map { var c = $0; c.speed = 1; return c } }
+    }
+
+    // MARK: Captions
+
+    func setCaptions(_ cues: [CaptionCue]) {
+        edit(.render) { $0.captions = cues }
+    }
+
+    func updateCaption(_ id: UUID, text: String) {
+        edit(.render, coalesce: "cap-\(id)") { d in
+            guard let i = d.captions.firstIndex(where: { $0.id == id }) else { return }
+            d.captions[i].text = text
+        }
+    }
+
+    func deleteCaption(_ id: UUID) {
+        edit(.render) { $0.captions.removeAll { $0.id == id } }
+    }
+
+    /// Captions mapped to the edited timeline, as SubRip text.
+    func srt() -> String {
+        var out = ""
+        var n = 1
+        for cue in doc.captions.sorted(by: { $0.start < $1.start }) {
+            guard let (a, b) = compRange(source: cue.start, cue.end) else { continue }
+            out += "\(n)\n\(srtTime(a)) --> \(srtTime(b))\n\(cue.text)\n\n"
+            n += 1
+        }
+        return out
+    }
+
+    /// The edited-timeline range covered by a source range (nil if it was cut entirely).
+    private func compRange(source a: Double, _ b: Double) -> (Double, Double)? {
+        var lo: Double?, hi: Double?
+        for seg in editMap.segments {
+            let s = max(a, seg.srcStart), e = min(b, seg.srcEnd)
+            guard e - s > 0.05 else { continue }
+            let cs = seg.compStart + (s - seg.srcStart) / seg.speed
+            let ce = seg.compStart + (e - seg.srcStart) / seg.speed
+            lo = min(lo ?? cs, cs)
+            hi = max(hi ?? ce, ce)
+        }
+        guard let lo, let hi else { return nil }
+        return (lo, hi)
+    }
+
+    private func srtTime(_ t: Double) -> String {
+        let ms = Int((max(0, t) * 1000).rounded())
+        return String(format: "%02d:%02d:%02d,%03d", ms / 3_600_000, (ms / 60_000) % 60, (ms / 1000) % 60, ms % 1000)
+    }
+
     func rename(_ name: String) {
         edit(.meta, coalesce: "rename") { $0.name = name }
     }
@@ -436,6 +557,20 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Renders the current frame at full quality.
+    func currentFrameImage(shortSide: Int = 1440) async -> CGImage? {
+        guard let assets else { return nil }
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        let model = makeRenderModel(for: built)
+        let size = model.outputSize(shortSide: shortSide)
+        let gen = AVAssetImageGenerator(asset: built.composition)
+        gen.videoComposition = CompositionBuilder.videoComposition(model: model, renderSize: size, fps: 60, duration: built.duration)
+        gen.maximumSize = size
+        gen.requestedTimeToleranceBefore = .zero
+        gen.requestedTimeToleranceAfter = .zero
+        return try? await gen.image(at: CMTime(sec: min(compTime, max(0, duration - 0.02)))).image
+    }
+
     func exportJob() -> ExportJob? {
         guard let assets else { return nil }
         let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
@@ -445,5 +580,11 @@ final class EditorModel: ObservableObject {
     func close() {
         player.pause()
         saveNow()
+    }
+}
+
+private extension EditorModel.Snapshot {
+    init(_ d: ProjectDocument) {
+        self.init(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style, effects: d.effects, captions: d.captions)
     }
 }

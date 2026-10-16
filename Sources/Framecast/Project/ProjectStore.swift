@@ -29,6 +29,18 @@ enum ProjectIO {
         return track
     }
 
+    static func loadKeys(folder: URL) -> [KeyEvent] {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent(ProjectFiles.keys)),
+              let keys = try? JSONDecoder().decode([KeyEvent].self, from: data) else { return [] }
+        return keys
+    }
+
+    static func saveKeys(_ keys: [KeyEvent], folder: URL) {
+        if let data = try? JSONEncoder().encode(keys) {
+            try? data.write(to: folder.appendingPathComponent(ProjectFiles.keys), options: .atomic)
+        }
+    }
+
     static func saveCursor(_ track: CursorTrack, folder: URL) {
         if let data = try? JSONEncoder().encode(track) {
             try? data.write(to: folder.appendingPathComponent(ProjectFiles.cursor), options: .atomic)

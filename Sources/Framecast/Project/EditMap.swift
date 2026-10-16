@@ -78,3 +78,92 @@ enum ZoomGenerator {
         return segs
     }
 }
+
+/// Finds stretches of a recording worth speeding up or cutting.
+enum ActivityAnalyzer {
+    /// Quiet stretches with no cursor movement, clicks or key presses, trimmed by a small margin
+    /// so the moments before and after stay at normal speed.
+    static func idleRanges(cursor: CursorTrack, keys: [KeyEvent], duration: Double,
+                           minIdle: Double = 2.5, margin: Double = 0.4) -> [(Double, Double)] {
+        var activity: [Double] = []
+        var last: CursorSample?
+        for s in cursor.samples {
+            if let l = last, hypot(s.x - l.x, s.y - l.y) < 0.002 { continue }
+            activity.append(s.t)
+            last = s
+        }
+        activity += cursor.clicks.map(\.t)
+        activity += keys.map(\.t)
+        guard !activity.isEmpty else { return [] }
+        activity.sort()
+
+        var ranges: [(Double, Double)] = []
+        var prev = 0.0
+        for t in activity + [duration] {
+            let a = prev == 0 ? 0 : prev + margin
+            let b = t >= duration ? duration : t - margin
+            if t - prev >= minIdle, b - a >= 1.0 { ranges.append((a, b)) }
+            prev = t
+        }
+        return ranges
+    }
+
+    /// Bursts of plain typing (no shortcuts), at least `minLength` seconds long.
+    static func typingRanges(keys: [KeyEvent], maxGap: Double = 1.2, minLength: Double = 1.5) -> [(Double, Double)] {
+        let typed = keys.filter { !$0.isShortcut || $0.label == "⌫" }.map(\.t).sorted()
+        var ranges: [(Double, Double)] = []
+        var start: Double?
+        var prev = 0.0
+        for t in typed {
+            if let s = start, t - prev > maxGap {
+                if prev - s >= minLength { ranges.append((s + 0.2, prev)) }
+                start = t
+            } else if start == nil {
+                start = t
+            }
+            prev = t
+        }
+        if let s = start, prev - s >= minLength { ranges.append((s + 0.2, prev)) }
+        return ranges
+    }
+}
+
+enum ClipOps {
+    /// Splits clips at the range edges and sets the speed inside the ranges (or removes them when `speed` is nil).
+    /// Always keeps at least one clip.
+    static func apply(_ ranges: [(Double, Double)], to clips: [Clip], speed: Double?) -> [Clip] {
+        var result: [Clip] = []
+        for clip in clips.sorted(by: { $0.start < $1.start }) {
+            var pieces: [Clip] = []
+            var cursor = clip.start
+            for (a, b) in ranges.sorted(by: { $0.0 < $1.0 }) {
+                let s = max(a, clip.start), e = min(b, clip.end)
+                guard e - s > 0.2 else { continue }
+                if s - cursor > 0.05 {
+                    var before = clip
+                    before.id = pieces.isEmpty ? clip.id : UUID()
+                    before.start = cursor
+                    before.end = s
+                    pieces.append(before)
+                }
+                if let speed {
+                    var inside = clip
+                    inside.id = UUID()
+                    inside.start = s
+                    inside.end = e
+                    inside.speed = speed
+                    pieces.append(inside)
+                }
+                cursor = e
+            }
+            if clip.end - cursor > 0.05 {
+                var after = clip
+                after.id = pieces.isEmpty ? clip.id : UUID()
+                after.start = cursor
+                pieces.append(after)
+            }
+            result += pieces
+        }
+        return result.isEmpty ? clips : result
+    }
+}

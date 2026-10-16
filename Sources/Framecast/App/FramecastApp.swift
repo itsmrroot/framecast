@@ -44,6 +44,11 @@ struct FramecastApp: App {
                 Button("Add Zoom at Playhead") {
                     if let e = WindowManager.shared.activeEditor { e.addZoom(at: e.sourceTime) }
                 }
+                Menu("Add Effect at Playhead") {
+                    ForEach(EffectKind.allCases) { kind in
+                        Button(kind.label) { WindowManager.shared.activeEditor?.addEffect(kind) }
+                    }
+                }
                 Divider()
                 Button("Export…") { WindowManager.shared.activeEditorController?.showExport() }
                     .keyboardShortcut("e", modifiers: [.command])

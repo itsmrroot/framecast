@@ -45,6 +45,8 @@ enum SelfTest {
         try? FileManager.default.removeItem(at: folder)
         try FileManager.default.createDirectory(at: folder.appendingPathComponent(ProjectFiles.cursors), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: video, to: folder.appendingPathComponent(ProjectFiles.screen))
+        // Stand-in webcam so camera layouts and background effects are exercised too.
+        try FileManager.default.copyItem(at: video, to: folder.appendingPathComponent(ProjectFiles.webcam))
 
         let asset = AVURLAsset(url: folder.appendingPathComponent(ProjectFiles.screen))
         let duration = try await asset.load(.duration).seconds
@@ -68,14 +70,35 @@ enum SelfTest {
 
         let info = RecordingInfo(duration: duration, pointWidth: size.width / 2, pointHeight: size.height / 2,
                                  pixelWidth: Int(size.width), pixelHeight: Int(size.height),
-                                 hasWebcam: false, hasMic: false, hasSystemAudio: false, sourceName: "Self test", hasCursorData: true)
+                                 hasWebcam: true, hasMic: false, hasSystemAudio: false, sourceName: "Self test", hasCursorData: true)
         var style = Style()
         style.background.kind = .wallpaper
+        style.keystrokes = .all
+        style.camera.background = .blur
         let zooms = ZoomGenerator.generate(from: cursor.clicks, duration: duration, scale: 2)
+        var title = EffectSegment(kind: .text, start: 0, end: 2.6)
+        title.text = "Framecast self-test"
+        var blur = EffectSegment(kind: .blur, start: 3.0, end: 6.0)
+        blur.x = 0.55; blur.y = 0.08; blur.w = 0.35; blur.h = 0.22
+        var spot = EffectSegment(kind: .spotlight, start: 6.5, end: 8.5)
+        spot.x = 0.1; spot.y = 0.45; spot.w = 0.4; spot.h = 0.3
+        let effects = [title, blur, spot,
+                       EffectSegment(kind: .hideCursor, start: 4.0, end: 5.2),
+                       EffectSegment(kind: .cameraFull, start: duration * 0.72, end: duration * 0.93)]
+        let captions = [CaptionCue(start: 0.4, end: 3.0, text: "Welcome to Framecast, the screen recorder for your Mac."),
+                        CaptionCue(start: 3.2, end: 6.2, text: "Blur hides anything sensitive.")]
+        ProjectIO.saveKeys([KeyEvent(t: 0.9, label: "⌘⇧S", isShortcut: true),
+                            KeyEvent(t: 3.4, label: "h", isShortcut: false), KeyEvent(t: 3.6, label: "i", isShortcut: false),
+                            KeyEvent(t: 3.8, label: "!", isShortcut: false)], folder: folder)
         let doc = ProjectDocument(name: "Self Test", createdAt: Date(), info: info,
                                   clips: [Clip(start: 0, end: duration * 0.6, speed: 1), Clip(start: duration * 0.7, end: duration, speed: 2)],
-                                  zooms: zooms, style: style)
+                                  zooms: zooms, style: style, effects: effects, captions: captions)
         ProjectIO.save(doc, folder: folder)
+        let reloaded = try ProjectIO.load(folder: folder)
+        print("round-trip: \(reloaded.effects.count) effects, \(reloaded.captions.count) captions")
+        let idle = ActivityAnalyzer.idleRanges(cursor: cursor, keys: [], duration: duration)
+        let split = ClipOps.apply([(2.0, 4.0)], to: [Clip(start: 0, end: 10)], speed: 4)
+        print("idle ranges: \(idle.count), clip ops: \(split.map { String(format: "%.1f-%.1f@%g", $0.start, $0.end, $0.speed) })")
         print("zooms: \(zooms.map { String(format: "%.2f-%.2f", $0.start, $0.end) })")
 
         let model = try EditorModel(folder: folder)
@@ -91,6 +114,30 @@ enum SelfTest {
         let start = Date()
         try await exporter.export(job: job, settings: settings, to: mp4) { _ in }
         print(String(format: "mp4 exported in %.1fs", Date().timeIntervalSince(start)))
+        print("srt:\n\(model.srt())")
+        print("webcam track: \(String(describing: job.model.webcamTrackID)), comp video tracks: \(job.built.composition.tracks(withMediaType: .video).count)")
+        // Direct overlay render with a synthetic camera frame.
+        let fake = CIImage(color: CIColor(red: 0.9, green: 0.3, blue: 0.2)).cropped(to: CGRect(x: 0, y: 0, width: 1280, height: 720))
+        let screenImg = CIImage(color: CIColor(red: 0.2, green: 0.4, blue: 0.9)).cropped(to: CGRect(x: 0, y: 0, width: 1920, height: 1200))
+        for t in [1.3, 7.4, 9.9] {
+            let img = FrameRenderer.shared.compose(model: job.model, compTime: t, screen: screenImg, camera: fake, size: CGSize(width: 1920, height: 1080))
+            if let cg = FrameRenderer.shared.ciContext.createCGImage(img, from: CGRect(x: 0, y: 0, width: 1920, height: 1080)),
+               let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) {
+                try data.write(to: outDir.appendingPathComponent(String(format: "direct-%.1f.png", t)))
+            }
+        }
+
+        // Frames for visual checks (edited-timeline seconds).
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: mp4))
+        gen.requestedTimeToleranceBefore = .zero
+        gen.requestedTimeToleranceAfter = .zero
+        let editedDuration = job.built.duration.seconds
+        for t in [1.3, 4.6, 7.4, editedDuration - 1.0] {
+            if let img = try? await gen.image(at: CMTime(sec: t)).image,
+               let data = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) {
+                try data.write(to: outDir.appendingPathComponent(String(format: "frame-%.1f.png", t)))
+            }
+        }
 
         settings.format = .gif
         settings.gifWidth = 640

@@ -26,7 +26,11 @@ a crisp animated cursor, a stylish background and an optional webcam bubble.
 - 🎯 **Automatic zoom.** Click clusters become smooth zooms, and the camera follows your cursor.
 - 🖱️ **Cursor as data.** Position, clicks and cursor shape are recorded separately, so you can restyle the cursor after recording.
 - 🎨 **Instant polish.** Wallpapers, gradients, padding, rounded corners and shadows, with no keyframes to set.
-- 📸 **Webcam bubble.** Circle, rounded or square, and it shrinks out of the way while zoomed in.
+- 🔒 **Privacy built in.** Blur or pixelate passwords, emails and customer data. The blur follows every zoom.
+- 💬 **Captions on your Mac.** Transcribe your narration on-device, edit the lines, burn them in or export `.srt`.
+- ⌨️ **Keystrokes on screen.** Shortcuts like ⌘⇧S appear as clean pills, so viewers can follow along.
+- 🐇 **Smart speed.** One click speeds up typing and idle moments, or cuts them out.
+- 📸 **Webcam that does more.** Blur or remove your background, go full screen for intros and outros, or hide the camera for any part of the video.
 - ⚡ **Native and fast.** Built with ScreenCaptureKit, AVFoundation and Core Image on Metal. The preview and the export use the same renderer, so what you see is what you get.
 
 ## 📥 Install
@@ -62,6 +66,8 @@ Recordings are saved to `~/Movies/Framecast`.
 - Floating control bar and menu bar timer, both hidden from the recording
 - Global shortcut <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>2</kbd> to start or stop from anywhere
 - Option to hide desktop icons
+- Optional keystroke recording. macOS never passes on keys typed into password fields.
+- One-click access to the system's Voice Isolation mic mode
 - 30 or 60 fps HEVC capture at native Retina resolution
 
 </details>
@@ -74,9 +80,14 @@ Recordings are saved to `~/Movies/Framecast`.
 - **Cursor:** smoothing, size, high-res vector arrow, motion blur, ripple or ring click effects, a press animation, hide when idle
 - **Background:** macOS wallpapers, 16 gradients, solid colours or your own image, with optional blur
 - **Frame:** padding, rounded corners, shadow strength and softness
-- **Aspect ratio:** Auto, 16:9, 4:3, 1:1, 9:16, 3:4
+- **Aspect ratio:** Auto, 16:9, 4:3, 5:4, 1:1, 4:5, 9:16, 3:4
 - **Webcam:** circle, rounded or square shape, four positions, size, mirror, border
 - **Timeline:** filmstrip, split, cut, trim by dragging clip edges, per-clip speed from 0.5× to 8× with pitch preserved
+- **Effects lane:** add blur, spotlight, title, hide-cursor and camera-layout effects. They can overlap, so you can blur several areas at once. Draw each area on a frame of the recording.
+- **Captions:** on-device transcription in any language macOS supports, with editable lines, adjustable size and SRT export
+- **Keystrokes:** show shortcuts only or everything you type, at any size
+- **Smart speed:** speed up idle moments (4× or 8×) or typing (2× or 4×), cut idle moments, or reset all speeds
+- **Camera background:** keep it, blur it, or remove it (Vision person segmentation)
 - **Audio:** separate volume for system audio and microphone
 - Undo and redo, style presets, a default style for new recordings
 - Import existing videos and edit them the same way
@@ -88,6 +99,8 @@ Recordings are saved to `~/Movies/Framecast`.
 
 - MP4 in H.264 or HEVC: 720p, 1080p, 1440p or 4K, at 24, 30 or 60 fps, with three quality levels
 - Animated GIF
+- Save any frame as a PNG
+- Captions as `.srt`
 - Show in Finder, open, or copy to the clipboard and paste straight into Slack, Mail and similar apps
 
 </details>
@@ -99,6 +112,8 @@ Recordings are saved to `~/Movies/Framecast`.
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>S</kbd> | Split clip at playhead |
 | <kbd>Z</kbd> | Add zoom at playhead |
+| <kbd>B</kbd> | Add blur at playhead |
+| <kbd>T</kbd> | Add title at playhead |
 | <kbd>⌫</kbd> | Delete selected zoom, or cut selected clip |
 | <kbd>←</kbd> <kbd>→</kbd> | Step one frame |
 | <kbd>⌘</kbd> <kbd>Z</kbd> / <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>Z</kbd> | Undo / redo |
@@ -142,10 +157,11 @@ Sources/Framecast/
 ├── Recording/  ScreenCaptureKit capture, camera/mic capture, cursor recorder,
 │               shared RecordingClock (aligns every stream at t=0, removes pauses),
 │               countdown / area selection / control bar overlays, global hotkey
-├── Project/    Codable project model, library, presets,
-│               EditMap (source ↔ edited time), auto-zoom generator
+├── Project/    Codable project model, library, presets, Transcriber (Speech),
+│               EditMap (source ↔ edited time), auto-zoom generator, smart speed
 ├── Render/     CursorPath (spring-smoothed), CameraPath (zoom + follow),
 │               RenderModel (immutable render snapshot), FrameRenderer (Core Image),
+│               TextArt (captions, keystrokes, titles), PersonSegmenter (Vision),
 │               AVFoundation custom video compositor + composition builder
 ├── Export/     MP4 (AVAssetReader → AVAssetWriter) and GIF export
 └── UI/         SwiftUI home screen, editor, timeline, inspector, export sheet
@@ -153,7 +169,7 @@ Sources/Framecast/
 
 - **One renderer.** The same custom `AVVideoCompositing` compositor drives the live preview (through `AVPlayer`) and the export.
 - **Non-destructive edits.** Cuts and speed changes are applied with an `AVMutableComposition`. Zooms, cursor effects and styling are drawn per frame by `FrameRenderer` in output pixels, so they stay sharp at any zoom level.
-- **Simple projects.** A project is a `*.framecast` folder containing `screen.mov`, `webcam.mov`, `mic.m4a`, `cursor.json`, the cursor images, and `project.json` with the edits and style.
+- **Simple projects.** A project is a `*.framecast` folder containing `screen.mov`, `webcam.mov`, `mic.m4a`, `cursor.json`, `keys.json`, the cursor images, and `project.json` with the edits, effects, captions and style.
 
 ## 🧪 Self-tests
 

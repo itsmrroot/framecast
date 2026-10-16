@@ -10,6 +10,8 @@ final class FrameRenderer: @unchecked Sendable {
     static let shared = FrameRenderer()
 
     let ciContext: CIContext
+    let text = TextArt()
+    private let segmenter = PersonSegmenter()
     private let outputColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     private init() {
@@ -77,8 +79,23 @@ final class FrameRenderer: @unchecked Sendable {
             out = img.composited(over: out)
         }
 
+        // Blur and spotlight areas live on the recording, so they follow the zoom.
+        let active = model.activeEffects(at: t)
+        func regionRect(_ r: CGRect) -> CGRect {
+            CGRect(x: sr.minX + r.minX * sr.width, y: sr.maxY - r.maxY * sr.height,
+                   width: r.width * sr.width, height: r.height * sr.height).applying(M)
+        }
+        for (e, a) in active where e.kind == .blur {
+            let r = regionRect(e.region).intersection(target)
+            if r.width > 1, r.height > 1 { out = blurRegion(out, rect: r, effect: e, alpha: a, unit: L.unit * s) }
+        }
+        for (e, a) in active where e.kind == .spotlight {
+            out = spotlight(out, hole: regionRect(e.region), dim: e.intensity * a, canvas: CGRect(origin: .zero, size: size), unit: L.unit * s)
+        }
+
         // Cursor + clicks
-        if style.showCursor, let cp = model.cursor, cp.hasData {
+        let cursorVisibility = 1 - model.amount(of: .hideCursor, at: t)
+        if style.showCursor, cursorVisibility > 0.001, let cp = model.cursor, cp.hasData {
             func canvasPoint(_ p: CGPoint) -> CGPoint {
                 CGPoint(x: sr.minX + p.x * sr.width, y: sr.maxY - p.y * sr.height).applying(M)
             }
@@ -91,12 +108,13 @@ final class FrameRenderer: @unchecked Sendable {
                     let p = (t - c.t) / duration
                     let pos = canvasPoint(cp.state(at: c.t).position)
                     let r = CGFloat(10 + 34 * easeOutCubic(p)) * ptScale * s * cursorScale / 1.6
-                    let alpha = CGFloat(1 - p)
+                    let alpha = CGFloat((1 - p) * cursorVisibility)
                     out = clickEffect(style.clickEffect, at: pos, radius: r, alpha: alpha, unit: L.unit * s).composited(over: out)
                 }
             }
 
-            let st = cp.state(at: t)
+            var st = cp.state(at: t)
+            st.opacity *= cursorVisibility
             if st.opacity > 0.01 {
                 let (art, info) = model.cursorArt(at: t)
                 let pxPerPt = ptScale * s * cursorScale * model.pressScale(at: t)
@@ -131,12 +149,88 @@ final class FrameRenderer: @unchecked Sendable {
             }
         }
 
-        // Webcam bubble (not affected by the camera zoom)
+        // Titles sit on the canvas, unaffected by the zoom.
+        for (e, a) in active where e.kind == .text && !e.text.isEmpty {
+            out = titleCard(e, alpha: a, size: size, unit: L.unit).composited(over: out)
+        }
+
+        // Webcam (not affected by the camera zoom)
         if style.camera.visible, let camera, camera.extent.width > 0 {
-            out = webcamOverlay(camera, style: style.camera, size: size, unit: L.unit, zoom: s).composited(over: out)
+            let full = model.amount(of: .cameraFull, at: t)
+            let hidden = model.amount(of: .cameraHidden, at: t)
+            if hidden < 0.999 {
+                out = webcamOverlay(camera, style: style.camera, size: size, unit: L.unit, zoom: s,
+                                    full: full, hidden: hidden).composited(over: out)
+            }
+        }
+
+        // Captions, then keystrokes just above them.
+        let minDim = min(size.width, size.height)
+        var bottom = minDim * 0.045
+        if let cue = model.caption(at: t) {
+            let img = text.image(cue.text, kind: .caption, fontSize: 34 * L.unit * CGFloat(style.captionSize), maxWidth: size.width * 0.78)
+            out = img.transformed(by: CGAffineTransform(translationX: (size.width - img.extent.width) / 2, y: bottom)).composited(over: out)
+            bottom += img.extent.height + 12 * L.unit
+        }
+        if let (label, alpha) = model.keystroke(at: t) {
+            var img = text.image(label, kind: .keycap, fontSize: 30 * L.unit * CGFloat(style.keystrokeSize), maxWidth: size.width * 0.7)
+            img = img.transformed(by: CGAffineTransform(translationX: (size.width - img.extent.width) / 2, y: bottom))
+            if alpha < 0.999 { img = withAlpha(img, CGFloat(alpha)) }
+            out = img.composited(over: out)
         }
 
         return out.cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    // MARK: Effects
+
+    private func blurRegion(_ base: CIImage, rect: CGRect, effect e: EffectSegment, alpha: Double, unit: CGFloat) -> CIImage {
+        let source = base.clampedToExtent()
+        var img: CIImage
+        if e.pixelate {
+            img = source.applyingFilter("CIPixellate", parameters: [
+                kCIInputScaleKey: max(4, (8 + 40 * e.intensity) * unit),
+                kCIInputCenterKey: CIVector(x: rect.minX, y: rect.minY),
+            ])
+        } else {
+            img = source.applyingGaussianBlur(sigma: Double((4 + 40 * e.intensity) * unit))
+        }
+        img = img.cropped(to: rect).applyingFilter("CISourceInCompositing", parameters: [
+            kCIInputBackgroundImageKey: roundedRect(rect, radius: 8 * unit),
+        ])
+        if alpha < 0.999 { img = withAlpha(img, CGFloat(alpha)) }
+        return img.composited(over: base)
+    }
+
+    private func spotlight(_ base: CIImage, hole: CGRect, dim: Double, canvas: CGRect, unit: CGFloat) -> CIImage {
+        let shade = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(min(0.92, dim)))).cropped(to: canvas)
+        let shaded = shade.composited(over: base)
+        // White inside the hole keeps the original; black elsewhere shows the shaded frame.
+        let mask = roundedRect(hole, radius: 12 * unit)
+            .composited(over: CIImage(color: .black).cropped(to: canvas))
+            .applyingGaussianBlur(sigma: Double(5 * unit))
+            .cropped(to: canvas)
+        return base.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: shaded, kCIInputMaskImageKey: mask,
+        ]).cropped(to: canvas)
+    }
+
+    private func titleCard(_ e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat) -> CIImage {
+        let img = text.image(e.text, kind: .title, fontSize: 58 * unit * CGFloat(e.textSize), maxWidth: size.width * 0.82)
+        let w = img.extent.width, h = img.extent.height
+        let margin = min(size.width, size.height) * 0.08
+        var y: CGFloat
+        switch e.placement {
+        case .top: y = size.height - margin - h
+        case .center: y = (size.height - h) / 2
+        case .bottom: y = margin
+        }
+        y -= CGFloat(1 - alpha) * 24 * unit
+        let card = img.transformed(by: CGAffineTransform(translationX: (size.width - w) / 2, y: y))
+        let shadow = roundedRect(card.extent.offsetBy(dx: 0, dy: -10 * unit), radius: 26 * unit * CGFloat(e.textSize),
+                                 color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+            .applyingGaussianBlur(sigma: Double(22 * unit))
+        return withAlpha(card.composited(over: shadow), CGFloat(alpha))
     }
 
     // MARK: Helpers
@@ -198,51 +292,90 @@ final class FrameRenderer: @unchecked Sendable {
         return outer.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask])
     }
 
-    private func webcamOverlay(_ cam: CIImage, style cs: CameraStyle, size: CGSize, unit: CGFloat, zoom: CGFloat) -> CIImage {
+    private func webcamOverlay(_ source: CIImage, style cs: CameraStyle, size: CGSize, unit: CGFloat, zoom: CGFloat,
+                               full: Double, hidden: Double) -> CIImage {
+        var cam = source
+        let removeBackground = cs.background == .remove
+        if cs.background != .none, let mask = segmenter.mask(for: cam) {
+            let bg: CIImage = cs.background == .blur
+                ? cam.clampedToExtent().applyingGaussianBlur(sigma: Double(cam.extent.width / 70)).cropped(to: cam.extent)
+                : CIImage.empty()
+            cam = cam.applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: bg, kCIInputMaskImageKey: mask,
+            ]).cropped(to: source.extent)
+        }
+
+        // Bubble geometry, then blend towards the full canvas for "camera full screen".
         let minDim = min(size.width, size.height)
         var d = CGFloat(cs.size) * minDim
         if cs.shrinkOnZoom {
-            d *= CGFloat(lerp(1, 0.7, Double(min(1, max(0, zoom - 1)))))
+            d *= CGFloat(lerp(1, 0.7, Double(min(1, max(0, zoom - 1))) * (1 - full)))
         }
-        let e = cam.extent
-        let side = min(e.width, e.height)
-        var img = cam.cropped(to: CGRect(x: e.midX - side / 2, y: e.midY - side / 2, width: side, height: side))
-        img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
-        if cs.mirror {
-            img = img.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: side, ty: 0))
-        }
-        img = img.transformed(by: CGAffineTransform(scaleX: d / side, y: d / side))
-
         let margin = 0.04 * minDim
-        let x: CGFloat, y: CGFloat
+        let bx: CGFloat, by: CGFloat
         switch cs.corner {
-        case .topLeft: x = margin; y = size.height - margin - d
-        case .topRight: x = size.width - margin - d; y = size.height - margin - d
-        case .bottomLeft: x = margin; y = margin
-        case .bottomRight: x = size.width - margin - d; y = margin
+        case .topLeft: bx = margin; by = size.height - margin - d
+        case .topRight: bx = size.width - margin - d; by = size.height - margin - d
+        case .bottomLeft: bx = margin; by = margin
+        case .bottomRight: bx = size.width - margin - d; by = margin
         }
-        img = img.transformed(by: CGAffineTransform(translationX: x - img.extent.minX, y: y - img.extent.minY))
-        let rect = CGRect(x: x, y: y, width: d, height: d)
-        let radius: CGFloat
+        let bubble = CGRect(x: bx, y: by, width: d, height: d)
+        let f = CGFloat(full)
+        var rect = CGRect(x: bubble.minX * (1 - f), y: bubble.minY * (1 - f),
+                          width: bubble.width + (size.width - bubble.width) * f,
+                          height: bubble.height + (size.height - bubble.height) * f)
+        if hidden > 0 {
+            let k = 1 - 0.25 * CGFloat(hidden)
+            rect = CGRect(x: rect.midX - rect.width * k / 2, y: rect.midY - rect.height * k / 2,
+                          width: rect.width * k, height: rect.height * k)
+        }
+
+        // Fill the target rect with the camera image (aspect fill), mirrored if needed.
+        let e = cam.extent.width > 0 ? cam.extent : source.extent
+        let crop = e.aspectFit(aspect: rect.width / max(rect.height, 1))
+        var img = cam.cropped(to: crop)
+        img = img.transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+        if cs.mirror {
+            img = img.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: crop.width, ty: 0))
+        }
+        let k = rect.width / max(crop.width, 1)
+        img = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+
+        let shapeRadius: CGFloat
         switch cs.shape {
-        case .circle: radius = d / 2
-        case .rounded: radius = d * 0.18
-        case .square: radius = 0
+        case .circle: shapeRadius = rect.width / 2
+        case .rounded: shapeRadius = rect.width * 0.18
+        case .square: shapeRadius = 0
         }
-        img = radius > 0
+        // A cut-out person isn't clipped to the bubble shape, so their head and shoulders stay whole.
+        let radius = removeBackground ? 0 : shapeRadius * (1 - f)
+        img = radius > 0.5
             ? img.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: roundedRect(rect, radius: radius)])
             : img.cropped(to: rect)
 
         var result = img
-        if cs.border {
-            let bw = 3 * unit
-            let border = roundedRect(rect.insetBy(dx: -bw, dy: -bw), radius: radius > 0 ? radius + bw : 0,
-                                     color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-            result = result.composited(over: border)
+        let chrome = 1 - f
+        if removeBackground {
+            let silhouette = img.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.45),
+            ])
+            result = img.composited(over: silhouette.applyingGaussianBlur(sigma: Double(10 * unit))
+                .transformed(by: CGAffineTransform(translationX: 0, y: -6 * unit)))
+        } else if chrome > 0.01 {
+            if cs.border {
+                let bw = 3 * unit
+                let border = roundedRect(rect.insetBy(dx: -bw, dy: -bw), radius: radius > 0 ? radius + bw : 0,
+                                         color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9 * chrome))
+                result = result.composited(over: border)
+            }
+            let shadowRect = rect.insetBy(dx: -2 * unit, dy: -2 * unit).offsetBy(dx: 0, dy: -8 * unit)
+            let shadow = roundedRect(shadowRect, radius: radius > 0 ? radius : 0, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.45 * chrome))
+                .applyingGaussianBlur(sigma: Double(14 * unit))
+            result = result.composited(over: shadow)
         }
-        let shadowRect = rect.insetBy(dx: -2 * unit, dy: -2 * unit).offsetBy(dx: 0, dy: -8 * unit)
-        let shadow = roundedRect(shadowRect, radius: radius > 0 ? radius : 0, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.45))
-            .applyingGaussianBlur(sigma: 14 * unit)
-        return result.composited(over: shadow)
+        if hidden > 0.001 { result = withAlpha(result, CGFloat(1 - hidden)) }
+        return result
     }
 }

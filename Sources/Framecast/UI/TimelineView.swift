@@ -7,7 +7,7 @@ struct TimelineView: View {
     @State private var drag: DragState?
 
     struct DragState {
-        enum Kind { case clipLeft, clipRight, zoomMove, zoomLeft, zoomRight }
+        enum Kind { case clipLeft, clipRight, zoomMove, zoomLeft, zoomRight, effectMove, effectLeft, effectRight }
         var id: UUID
         var kind: Kind
         var start: Double
@@ -15,27 +15,36 @@ struct TimelineView: View {
     }
 
     private let rulerH: CGFloat = 24
-    private let clipH: CGFloat = 72
-    private let zoomH: CGFloat = 38
-    private let gap: CGFloat = 10
+    private let clipH: CGFloat = 60
+    private let zoomH: CGFloat = 32
+    private let effectRowH: CGFloat = 24
+    private let gap: CGFloat = 8
     private let inset: CGFloat = 18
 
     var body: some View {
-        VStack(spacing: 0) {
+        let rows = effectRows()
+        let rowCount = max(1, (rows.values.max() ?? -1) + 1)
+        let effectsH = CGFloat(rowCount) * (effectRowH + 3) + 3
+        let zoomY = rulerH + 6 + clipH + gap
+        let effectsY = zoomY + zoomH + gap
+        let totalH = effectsY + effectsH + 8
+        return VStack(spacing: 0) {
             header
             GeometryReader { geo in
                 let contentW = max(200, (geo.size.width - inset * 2) * zoomLevel)
                 let pps = contentW / CGFloat(model.sourceDuration)
-                ScrollView(.horizontal, showsIndicators: zoomLevel > 1.01) {
+                ScrollView([.horizontal, .vertical], showsIndicators: zoomLevel > 1.01 || totalH > geo.size.height) {
                     ZStack(alignment: .topLeading) {
                         ruler(width: contentW, pps: pps)
                         clipTrack(width: contentW, pps: pps)
                             .offset(y: rulerH + 6)
                         zoomTrack(width: contentW, pps: pps)
-                            .offset(y: rulerH + 6 + clipH + gap)
-                        playhead(pps: pps, height: rulerH + 6 + clipH + gap + zoomH + 4)
+                            .offset(y: zoomY)
+                        effectTrack(width: contentW, pps: pps, rows: rows, height: effectsH)
+                            .offset(y: effectsY)
+                        playhead(pps: pps, height: totalH - 4)
                     }
-                    .frame(width: contentW, height: rulerH + 6 + clipH + gap + zoomH + 8, alignment: .topLeading)
+                    .frame(width: contentW, height: totalH, alignment: .topLeading)
                     .padding(.horizontal, inset)
                     .padding(.top, 4)
                 }
@@ -51,6 +60,22 @@ struct TimelineView: View {
             IconButton(icon: "plus.magnifyingglass", label: "Zoom", help: "Add zoom at playhead (Z)") {
                 model.addZoom(at: model.sourceTime)
             }
+            Menu {
+                ForEach(EffectKind.allCases) { kind in
+                    Button {
+                        model.addEffect(kind)
+                    } label: {
+                        Label(kind.label, systemImage: kind.icon)
+                    }
+                    .disabled(kind.needsCamera && !model.doc.info.hasWebcam)
+                }
+            } label: {
+                Label("Effect", systemImage: "plus.square.on.square")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Add a blur, spotlight, title or layout change at the playhead")
+            smartSpeedMenu
             IconButton(icon: "trash", help: "Delete selection (⌫)", disabled: model.selection == .none) { model.deleteSelection() }
             Spacer()
             Text(hint)
@@ -69,8 +94,32 @@ struct TimelineView: View {
         switch model.selection {
         case .zoom: return "Drag to move · drag edges to resize · ⌫ to delete"
         case .clip: return "Drag edges to trim · change speed in the inspector · ⌫ to cut"
+        case .effect: return "Drag to move · drag edges to resize · ⌫ to delete"
         case .none: return "Click the zoom lane to add a zoom · S to split · Space to play"
         }
+    }
+
+    private var smartSpeedMenu: some View {
+        let hasActivity = !model.cursorTrack.isEmpty || !model.keys.isEmpty
+        let hasTyping = !model.keys.isEmpty
+        return Menu {
+            Section("Idle moments (no mouse or keyboard activity)") {
+                Button("Speed Up Idle Moments 4×") { model.applySmartSpeed(.idle, speed: 4) }.disabled(!hasActivity)
+                Button("Speed Up Idle Moments 8×") { model.applySmartSpeed(.idle, speed: 8) }.disabled(!hasActivity)
+                Button("Cut Idle Moments") { model.applySmartSpeed(.idle, speed: nil) }.disabled(!hasActivity)
+            }
+            Section("Typing") {
+                Button("Speed Up Typing 2×") { model.applySmartSpeed(.typing, speed: 2) }.disabled(!hasTyping)
+                Button("Speed Up Typing 4×") { model.applySmartSpeed(.typing, speed: 4) }.disabled(!hasTyping)
+            }
+            Divider()
+            Button("Reset All Speeds to 1×") { model.resetSpeeds() }
+        } label: {
+            Label("Smart Speed", systemImage: "hare")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(hasTyping ? "Automatically speed up typing and idle moments" : "Speed up idle moments. Turn on “Record keystrokes” to detect typing too.")
     }
 
     // MARK: Ruler
@@ -297,6 +346,116 @@ struct TimelineView: View {
             } }
             .frame(width: w, height: zoomH)
             .offset(x: CGFloat(s) * pps)
+    }
+
+    // MARK: Effects
+
+    /// Greedy row assignment so overlapping effects stack instead of covering each other.
+    private func effectRows() -> [UUID: Int] {
+        var rowEnds: [Double] = []
+        var rows: [UUID: Int] = [:]
+        for e in model.doc.effects.sorted(by: { $0.start < $1.start }) {
+            let (s, en) = effectRange(e)
+            if let r = rowEnds.firstIndex(where: { $0 <= s + 0.001 }) {
+                rows[e.id] = r
+                rowEnds[r] = en
+            } else {
+                rows[e.id] = rowEnds.count
+                rowEnds.append(en)
+            }
+        }
+        return rows
+    }
+
+    private func effectRange(_ e: EffectSegment) -> (Double, Double) {
+        if let d = drag, d.id == e.id { return (d.start, d.end) }
+        return (e.start, e.end)
+    }
+
+    static func effectColor(_ kind: EffectKind) -> Color {
+        switch kind {
+        case .blur: return Color(red: 0.25, green: 0.72, blue: 0.85)
+        case .spotlight: return Color(red: 0.95, green: 0.78, blue: 0.25)
+        case .text: return Color(red: 0.95, green: 0.42, blue: 0.62)
+        case .hideCursor: return Color(red: 0.6, green: 0.6, blue: 0.66)
+        case .cameraFull, .cameraHidden: return Color(red: 0.35, green: 0.8, blue: 0.5)
+        }
+    }
+
+    private func effectTrack(width: CGFloat, pps: CGFloat, rows: [UUID: Int], height: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.025))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .foregroundStyle(Color.white.opacity(0.12))
+                )
+                .overlay(alignment: .leading) {
+                    if model.doc.effects.isEmpty {
+                        Label("Effects: blur, spotlight, titles, hide cursor or camera. Add one with + Effect", systemImage: "sparkles")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textFaint).padding(.leading, 10)
+                    }
+                }
+                .frame(width: width, height: height)
+                .contentShape(Rectangle())
+                .gesture(SpatialTapGesture().onEnded { v in
+                    model.selection = .none
+                    model.seek(source: Double(v.location.x / pps))
+                })
+
+            ForEach(model.doc.effects) { e in
+                effectBlock(e, pps: pps, row: rows[e.id] ?? 0)
+            }
+        }
+        .frame(width: width, height: height, alignment: .topLeading)
+    }
+
+    private func effectBlock(_ e: EffectSegment, pps: CGFloat, row: Int) -> some View {
+        let (s, en) = effectRange(e)
+        let selected = model.selection == .effect(e.id)
+        let w = max(4, CGFloat(en - s) * pps)
+        let color = TimelineView.effectColor(e.kind)
+        let title = e.kind == .text ? e.text : e.kind.label
+        return RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(color.opacity(selected ? 0.9 : 0.6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.white.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
+            )
+            .overlay(alignment: .leading) {
+                if w > 30 {
+                    HStack(spacing: 4) {
+                        Image(systemName: e.kind.icon).font(.system(size: 10, weight: .semibold))
+                        if w > 70 { Text(title).font(.system(size: 10.5, weight: .semibold)) }
+                    }
+                    .foregroundStyle(.black.opacity(0.8))
+                    .padding(.leading, 8)
+                    .lineLimit(1)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { model.selection = .effect(e.id) }
+            .gesture(DragGesture(minimumDistance: 3).onChanged { v in
+                model.selection = .effect(e.id)
+                let ns = clamp(e.start + Double(v.translation.width / pps), 0, model.sourceDuration - e.duration)
+                drag = DragState(id: e.id, kind: .effectMove, start: ns, end: ns + e.duration)
+            }.onEnded { _ in
+                if let d = drag, d.id == e.id {
+                    model.updateEffect(e.id) { $0.start = d.start; $0.end = d.end }
+                }
+                drag = nil
+            })
+            .overlay(alignment: .leading) { edgeHandle(color: .white, visible: selected) { dx, ended in
+                let ns = clamp(e.start + Double(dx / pps), 0, e.end - 0.3)
+                if ended { drag = nil; model.updateEffect(e.id) { $0.start = ns } } else { drag = DragState(id: e.id, kind: .effectLeft, start: ns, end: e.end) }
+            } }
+            .overlay(alignment: .trailing) { edgeHandle(color: .white, visible: selected) { dx, ended in
+                let ne = clamp(e.end + Double(dx / pps), e.start + 0.3, model.sourceDuration)
+                if ended { drag = nil; model.updateEffect(e.id) { $0.end = ne } } else { drag = DragState(id: e.id, kind: .effectRight, start: e.start, end: ne) }
+            } }
+            .frame(width: w, height: effectRowH)
+            .offset(x: CGFloat(s) * pps, y: 3 + CGFloat(row) * (effectRowH + 3))
     }
 
     // MARK: Shared
