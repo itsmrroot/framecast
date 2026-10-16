@@ -1,0 +1,449 @@
+import Foundation
+import AVFoundation
+import CoreImage
+import AppKit
+import Combine
+import SwiftUI
+
+@MainActor
+final class EditorModel: ObservableObject {
+    enum Selection: Equatable { case none, zoom(UUID), clip(UUID) }
+    enum EditScope { case timeline, render, meta }
+
+    private struct Snapshot: Equatable {
+        var name: String
+        var clips: [Clip]
+        var zooms: [ZoomSegment]
+        var style: Style
+    }
+
+    let folder: URL
+    @Published private(set) var doc: ProjectDocument
+    let cursorTrack: CursorTrack
+    let cursorImages: [String: CIImage]
+
+    @Published private(set) var isReady = false
+    @Published private(set) var loadError: String?
+    @Published private(set) var compTime: Double = 0
+    @Published private(set) var isPlaying = false
+    @Published var selection: Selection = .none
+    @Published private(set) var editMap: EditMap
+    @Published private(set) var filmstrip: [CGImage] = []
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+    @Published private(set) var outputAspect: CGFloat = 16.0 / 9.0
+
+    let player = AVPlayer()
+    private(set) var assets: ProjectAssets?
+    private(set) var built: BuiltComposition?
+    private var cursorPathCache: (key: String, path: CursorPath)?
+    private var undoStack: [Snapshot] = []
+    private var redoStack: [Snapshot] = []
+    private var lastCoalesceKey: String?
+    private var lastEditTime = Date.distantPast
+    private var timeObserver: Any?
+    private var statusObservation: NSKeyValueObservation?
+    private var saveWork: DispatchWorkItem?
+    private var renderRefreshPending = false
+    private var isSeeking = false
+    private var pendingSeek: Double?
+
+    var sourceDuration: Double { max(doc.info.duration, 0.01) }
+    var sourceTime: Double { editMap.sourceTime(comp: compTime) }
+    var duration: Double { editMap.duration }
+
+    init(folder: URL) throws {
+        self.folder = folder
+        let doc = try ProjectIO.load(folder: folder)
+        self.doc = doc
+        let track = ProjectIO.loadCursor(folder: folder)
+        cursorTrack = track
+        cursorImages = CursorArt.loadImages(folder: folder, track: track)
+        editMap = EditMap(clips: doc.clips)
+        outputAspect = doc.style.aspect.value(source: CGSize(width: doc.info.pixelWidth, height: doc.info.pixelHeight), padding: doc.style.padding)
+
+        player.actionAtItemEnd = .pause
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 60), queue: .main) { [weak self] t in
+            MainActor.assumeIsolated {
+                guard let self, !self.isSeeking else { return }
+                self.compTime = t.seconds
+            }
+        }
+        statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+            let playing = p.timeControlStatus != .paused
+            DispatchQueue.main.async { self?.isPlaying = playing }
+        }
+
+        Task { await load() }
+    }
+
+    deinit {
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+    }
+
+    private func load() async {
+        do {
+            let assets = try await ProjectAssets.load(folder: folder, info: doc.info)
+            self.assets = assets
+            // Keep the document in sync with the real file length.
+            if abs(assets.screenDuration - doc.info.duration) > 0.05 {
+                doc.info.duration = assets.screenDuration
+                if doc.clips.count == 1, let c = doc.clips.first, c.start == 0 {
+                    doc.clips[0].end = min(c.end, assets.screenDuration)
+                }
+                doc.clips = doc.clips.map { var c = $0; c.end = min(c.end, assets.screenDuration); return c }.filter { $0.duration > 0.05 }
+                if doc.clips.isEmpty { doc.clips = [Clip(start: 0, end: assets.screenDuration)] }
+            }
+            rebuildComposition()
+            isReady = true
+            await generateFilmstrip()
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Editing
+
+    private var snapshot: Snapshot { Snapshot(name: doc.name, clips: doc.clips, zooms: doc.zooms, style: doc.style) }
+
+    func edit(_ scope: EditScope, coalesce key: String? = nil, _ change: (inout ProjectDocument) -> Void) {
+        let before = snapshot
+        var d = doc
+        change(&d)
+        let after = Snapshot(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style)
+        guard after != before else { return }
+        let now = Date()
+        let coalescing = key != nil && key == lastCoalesceKey && now.timeIntervalSince(lastEditTime) < 1.5
+        if !coalescing {
+            undoStack.append(before)
+            if undoStack.count > 200 { undoStack.removeFirst() }
+            redoStack.removeAll()
+        }
+        lastCoalesceKey = key
+        lastEditTime = now
+        doc = d
+        apply(scope)
+        updateUndoState()
+        scheduleSave()
+    }
+
+    func styleBinding<T>(_ kp: WritableKeyPath<Style, T>, key: String) -> Binding<T> {
+        Binding(get: { self.doc.style[keyPath: kp] },
+                set: { v in self.edit(.render, coalesce: key) { $0.style[keyPath: kp] = v } })
+    }
+
+    func undo() {
+        guard let prev = undoStack.popLast() else { return }
+        redoStack.append(snapshot)
+        restore(prev)
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(snapshot)
+        restore(next)
+    }
+
+    private func restore(_ s: Snapshot) {
+        let timelineChanged = s.clips != doc.clips
+        doc.name = s.name
+        doc.clips = s.clips
+        doc.zooms = s.zooms
+        doc.style = s.style
+        lastCoalesceKey = nil
+        if case .zoom(let id) = selection, !doc.zooms.contains(where: { $0.id == id }) { selection = .none }
+        if case .clip(let id) = selection, !doc.clips.contains(where: { $0.id == id }) { selection = .none }
+        apply(timelineChanged ? .timeline : .render)
+        updateUndoState()
+        scheduleSave()
+    }
+
+    private func updateUndoState() {
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    private func apply(_ scope: EditScope) {
+        switch scope {
+        case .timeline: rebuildComposition()
+        case .render: scheduleRenderRefresh()
+        case .meta: break
+        }
+    }
+
+    private func scheduleSave() {
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            ProjectIO.save(self.doc, folder: self.folder)
+        }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    func saveNow() {
+        saveWork?.cancel()
+        ProjectIO.save(doc, folder: folder)
+    }
+
+    // MARK: - Rendering pipeline
+
+    private func cursorPath() -> CursorPath? {
+        guard !cursorTrack.isEmpty else { return nil }
+        let key = "\(doc.style.cursorSmoothing)-\(doc.style.hideIdleCursor)-\(doc.info.duration)"
+        if let c = cursorPathCache, c.key == key { return c.path }
+        let p = CursorPath(track: cursorTrack, duration: doc.info.duration + 1,
+                           smoothing: doc.style.cursorSmoothing, hideWhenIdle: doc.style.hideIdleCursor)
+        cursorPathCache = (key, p)
+        return p
+    }
+
+    func makeRenderModel(for built: BuiltComposition) -> RenderModel {
+        RenderModel(style: doc.style, info: doc.info, editMap: editMap, zooms: doc.zooms,
+                    cursorPath: cursorPath(), cursorTrack: cursorTrack, cursorImages: cursorImages,
+                    screenTrackID: built.screenTrackID, webcamTrackID: doc.style.camera.visible ? built.webcamTrackID : nil)
+    }
+
+    private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
+        let size = model.outputSize(longSide: 1920)
+        return CompositionBuilder.videoComposition(model: model, renderSize: size, fps: 60, duration: built.duration)
+    }
+
+    private func rebuildComposition() {
+        guard let assets else { return }
+        let keepSource = sourceTime
+        editMap = EditMap(clips: doc.clips)
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        self.built = built
+        let model = makeRenderModel(for: built)
+        outputAspect = model.aspect
+        let item = AVPlayerItem(asset: built.composition)
+        item.videoComposition = previewVideoComposition(model, built: built)
+        item.audioMix = built.audioMix
+        item.audioTimePitchAlgorithm = .spectral
+        player.replaceCurrentItem(with: item)
+        seek(comp: editMap.compTime(source: keepSource))
+    }
+
+    private func scheduleRenderRefresh() {
+        guard !renderRefreshPending else { return }
+        renderRefreshPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.renderRefreshPending = false
+            self.refreshRender()
+        }
+    }
+
+    private func refreshRender() {
+        guard let built, let item = player.currentItem else { return }
+        let model = makeRenderModel(for: built)
+        outputAspect = model.aspect
+        item.videoComposition = previewVideoComposition(model, built: built)
+        item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style)
+        if !isPlaying {
+            player.seek(to: CMTime(sec: compTime), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+    }
+
+    // MARK: - Playback
+
+    func togglePlay() {
+        if isPlaying {
+            player.pause()
+        } else {
+            if compTime >= duration - 0.05 { seek(comp: 0) }
+            player.play()
+        }
+    }
+
+    func seek(comp: Double) {
+        let t = clamp(comp, 0, max(0, duration))
+        compTime = t
+        if isSeeking {
+            pendingSeek = t
+            return
+        }
+        isSeeking = true
+        player.seek(to: CMTime(sec: t), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSeeking = false
+                if let p = self.pendingSeek {
+                    self.pendingSeek = nil
+                    self.seek(comp: p)
+                }
+            }
+        }
+    }
+
+    func seek(source: Double) {
+        seek(comp: editMap.compTime(source: source))
+    }
+
+    func step(frames: Int) {
+        player.pause()
+        seek(comp: compTime + Double(frames) / 60)
+    }
+
+    // MARK: - Timeline operations
+
+    func splitAtPlayhead() {
+        let t = sourceTime
+        guard let idx = doc.clips.firstIndex(where: { t > $0.start + 0.1 && t < $0.end - 0.1 }) else { return }
+        edit(.timeline) { d in
+            let c = d.clips[idx]
+            var a = c, b = c
+            a.end = t
+            b.id = UUID()
+            b.start = t
+            d.clips.replaceSubrange(idx...idx, with: [a, b])
+        }
+        if let b = doc.clips.first(where: { abs($0.start - t) < 0.0001 }) { selection = .clip(b.id) }
+    }
+
+    func deleteSelection() {
+        switch selection {
+        case .zoom(let id):
+            edit(.render) { $0.zooms.removeAll { $0.id == id } }
+            selection = .none
+        case .clip(let id):
+            guard doc.clips.count > 1 else { NSSound.beep(); return }
+            edit(.timeline) { $0.clips.removeAll { $0.id == id } }
+            selection = .none
+        case .none:
+            break
+        }
+    }
+
+    func setClip(_ id: UUID, start: Double? = nil, end: Double? = nil, speed: Double? = nil) {
+        edit(.timeline, coalesce: speed != nil ? "speed-\(id)" : nil) { d in
+            guard let i = d.clips.firstIndex(where: { $0.id == id }) else { return }
+            if let start { d.clips[i].start = start }
+            if let end { d.clips[i].end = end }
+            if let speed { d.clips[i].speed = speed }
+        }
+    }
+
+    /// Allowed range for a clip's edges (between its neighbours).
+    func clipBounds(_ id: UUID) -> ClosedRange<Double> {
+        let sorted = doc.clips.sorted { $0.start < $1.start }
+        guard let i = sorted.firstIndex(where: { $0.id == id }) else { return 0...sourceDuration }
+        let lo = i > 0 ? sorted[i - 1].end : 0
+        let hi = i + 1 < sorted.count ? sorted[i + 1].start : sourceDuration
+        return lo...hi
+    }
+
+    func addZoom(at source: Double) {
+        let sorted = doc.zooms.sorted { $0.start < $1.start }
+        if sorted.contains(where: { source >= $0.start && source <= $0.end }) { return }
+        let next = sorted.first { $0.start > source }?.start ?? sourceDuration
+        let start = max(0, source)
+        let end = min(start + 3, next - 0.05, sourceDuration)
+        guard end - start >= 0.6 else { NSSound.beep(); return }
+        let z = ZoomSegment(start: start, end: end, scale: doc.style.defaultZoomScale, mode: .followCursor,
+                            focusX: 0.5, focusY: 0.5, isAuto: false)
+        edit(.render) { $0.zooms.append(z) }
+        selection = .zoom(z.id)
+    }
+
+    func updateZoom(_ id: UUID, coalesce: String? = nil, _ change: (inout ZoomSegment) -> Void) {
+        edit(.render, coalesce: coalesce) { d in
+            guard let i = d.zooms.firstIndex(where: { $0.id == id }) else { return }
+            change(&d.zooms[i])
+            d.zooms[i].isAuto = false
+        }
+    }
+
+    func zoomBounds(_ id: UUID) -> ClosedRange<Double> {
+        let sorted = doc.zooms.sorted { $0.start < $1.start }
+        guard let i = sorted.firstIndex(where: { $0.id == id }) else { return 0...sourceDuration }
+        let lo = i > 0 ? sorted[i - 1].end : 0
+        let hi = i + 1 < sorted.count ? sorted[i + 1].start : sourceDuration
+        return lo...hi
+    }
+
+    func regenerateAutoZooms() {
+        let generated = ZoomGenerator.generate(from: cursorTrack.clicks, duration: sourceDuration, scale: doc.style.defaultZoomScale)
+        edit(.render) { d in
+            let manual = d.zooms.filter { !$0.isAuto }
+            let auto = generated.filter { g in !manual.contains { $0.start < g.end && g.start < $0.end } }
+            d.zooms = manual + auto
+        }
+        selection = .none
+    }
+
+    func removeAllZooms() {
+        edit(.render) { $0.zooms.removeAll() }
+        selection = .none
+    }
+
+    func rename(_ name: String) {
+        edit(.meta, coalesce: "rename") { $0.name = name }
+    }
+
+    func applyPreset(_ style: Style) {
+        edit(.render) { $0.style = style }
+    }
+
+    var selectedZoom: ZoomSegment? {
+        if case .zoom(let id) = selection { return doc.zooms.first { $0.id == id } }
+        return nil
+    }
+
+    var selectedClip: Clip? {
+        if case .clip(let id) = selection { return doc.clips.first { $0.id == id } }
+        return nil
+    }
+
+    // MARK: - Images
+
+    private func generateFilmstrip() async {
+        guard let assets else { return }
+        let gen = AVAssetImageGenerator(asset: assets.screenAsset)
+        gen.maximumSize = CGSize(width: 320, height: 320)
+        gen.requestedTimeToleranceBefore = CMTime(sec: 0.5)
+        gen.requestedTimeToleranceAfter = CMTime(sec: 0.5)
+        let count = 30
+        var images: [CGImage] = []
+        for i in 0..<count {
+            let t = CMTime(sec: sourceDuration * (Double(i) + 0.5) / Double(count))
+            if let img = try? await gen.image(at: t).image { images.append(img) }
+        }
+        filmstrip = images
+    }
+
+    func rawFrame(at source: Double) async -> CGImage? {
+        guard let assets else { return nil }
+        let gen = AVAssetImageGenerator(asset: assets.screenAsset)
+        gen.maximumSize = CGSize(width: 800, height: 800)
+        gen.requestedTimeToleranceBefore = CMTime(sec: 0.1)
+        gen.requestedTimeToleranceAfter = CMTime(sec: 0.1)
+        return try? await gen.image(at: CMTime(sec: source)).image
+    }
+
+    /// Writes a styled thumbnail for the library.
+    func writeThumbnail() async {
+        guard let assets else { return }
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        let model = makeRenderModel(for: built)
+        let gen = AVAssetImageGenerator(asset: built.composition)
+        gen.videoComposition = CompositionBuilder.videoComposition(model: model, renderSize: model.outputSize(longSide: 640), fps: 30, duration: built.duration)
+        gen.maximumSize = CGSize(width: 640, height: 640)
+        let t = CMTime(sec: min(1.0, duration / 3))
+        if let img = try? await gen.image(at: t).image {
+            Thumbnailer.writeJPEG(img, to: folder.appendingPathComponent(ProjectFiles.thumbnail))
+        }
+    }
+
+    func exportJob() -> ExportJob? {
+        guard let assets else { return nil }
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        return ExportJob(built: built, model: makeRenderModel(for: built))
+    }
+
+    func close() {
+        player.pause()
+        saveNow()
+    }
+}
