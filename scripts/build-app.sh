@@ -5,11 +5,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-# iCloud Drive (Desktop & Documents) skips anything named *.nosync. Synced app bundles get
+# iCloud Drive (Desktop & Documents) skips anything named *.nosync: synced app bundles get
 # conflict copies ("Framecast 2.app") and Finder metadata that breaks code signing.
-mkdir -p build.nosync
-[ -L build ] || { [ -e build ] && echo "Move or delete ./build so it can link to build.nosync" >&2 && exit 1; ln -s build.nosync build; }
-APP="build.nosync/Framecast.app"
+# Spotlight skips *.noindex folders, which keeps development builds out of Launchpad / Apps.
+OUT="build.nosync/app.noindex"
+mkdir -p "$OUT"
+if [ "$(readlink build 2>/dev/null)" != "$OUT" ]; then
+  if [ -e build ] && [ ! -L build ]; then echo "Move or delete ./build so it can link to $OUT" >&2; exit 1; fi
+  ln -sfn "$OUT" build
+fi
+APP="$OUT/Framecast.app"
 # SwiftUI in the macOS 27 SDK needs Xcode's macro plugins; the 26 SDK builds with just the Command Line Tools.
 SDK_ARGS=()
 if [ -n "${ARCH:-}" ]; then SDK_ARGS+=(--arch "$ARCH"); fi
@@ -47,6 +52,5 @@ IDENTITY="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev
 xattr -cr "$APP"
 codesign --force --deep --sign "${IDENTITY:--}" "$APP"
 # Keep development builds out of Launchpad and Spotlight, so only the installed copy shows up there.
-touch build.nosync/.metadata_never_index
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$PWD/$APP" 2>/dev/null || true
 echo "Built build/Framecast.app (signed with: ${IDENTITY:-ad-hoc})"
