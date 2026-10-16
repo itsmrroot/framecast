@@ -1,5 +1,7 @@
 .build/
 build/
+build
+*.nosync/
 .DS_Store
 *.xcodeproj
 .swiftpm/

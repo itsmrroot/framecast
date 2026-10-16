@@ -5,7 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/Framecast.app"
+# iCloud Drive (Desktop & Documents) skips anything named *.nosync. Synced app bundles get
+# conflict copies ("Framecast 2.app") and Finder metadata that breaks code signing.
+mkdir -p build.nosync
+[ -L build ] || { [ -e build ] && echo "Move or delete ./build so it can link to build.nosync" >&2 && exit 1; ln -s build.nosync build; }
+APP="build.nosync/Framecast.app"
 # SwiftUI in the macOS 27 SDK needs Xcode's macro plugins; the 26 SDK builds with just the Command Line Tools.
 SDK_ARGS=()
 if [ -n "${ARCH:-}" ]; then SDK_ARGS+=(--arch "$ARCH"); fi
@@ -15,8 +19,9 @@ if ! xcodebuild -version >/dev/null 2>&1; then
   done
 fi
 
-swift build -c "$CONFIG" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"}
-BIN="$(swift build -c "$CONFIG" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} --show-bin-path)/Framecast"
+SDK_ARGS+=(--scratch-path .build.nosync)
+swift build -c "$CONFIG" "${SDK_ARGS[@]}"
+BIN="$(swift build -c "$CONFIG" "${SDK_ARGS[@]}" --show-bin-path)/Framecast"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -41,4 +46,4 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 IDENTITY="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')}"
 xattr -cr "$APP"
 codesign --force --deep --sign "${IDENTITY:--}" "$APP"
-echo "Built $APP (signed with: ${IDENTITY:-ad-hoc})"
+echo "Built build/Framecast.app (signed with: ${IDENTITY:-ad-hoc})"
