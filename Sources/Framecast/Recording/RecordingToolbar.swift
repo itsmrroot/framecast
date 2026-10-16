@@ -239,6 +239,7 @@ struct RecordingToolbarView: View {
             divider
 
             Button {
+                toolbar.hide()
                 WindowManager.shared.showHome()
             } label: {
                 Image(systemName: "folder")
@@ -247,7 +248,7 @@ struct RecordingToolbarView: View {
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
             }
             .buttonStyle(.plain)
-            .help("Show recordings")
+            .help("Open Framecast: your recordings and settings")
             .padding(.leading, 12)
 
             Menu {
@@ -271,6 +272,7 @@ struct RecordingToolbarView: View {
                     Text("30 fps").tag(30); Text("60 fps").tag(60)
                 }
                 Divider()
+                Button("Open Framecast Window") { toolbar.hide(); WindowManager.shared.showHome() }
                 Button("Settings…") { WindowManager.shared.showSettings() }
             } label: {
                 HStack(spacing: 4) {

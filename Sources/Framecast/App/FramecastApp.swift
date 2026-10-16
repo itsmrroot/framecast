@@ -153,7 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.applyAppearance()
         DeviceCapture.enableDiscovery()
         HotKeyCenter.shared.registerAll()
-        WindowManager.shared.showHome()
+        let opensProject = CommandLine.arguments.contains("--open")
+        if AppSettings.shared.launchView == .home || opensProject {
+            WindowManager.shared.showHome()
+        } else {
+            // Ready to record straight away; the home window is one click away (folder button).
+            RecordingToolbar.shared.show()
+        }
         Updater.shared.checkOnLaunch()
         // Opens a window on launch (handy for screenshots): --show toolbar | settings
         if let i = CommandLine.arguments.firstIndex(of: "--show"), CommandLine.arguments.count > i + 1 {
@@ -176,8 +182,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Clicking the Dock icon: the toolbar first (if that's the launch choice), the home window when the toolbar is already up.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { WindowManager.shared.showHome() }
+        MainActor.assumeIsolated {
+            if WindowManager.shared.hasOpenWindows { return }
+            if AppSettings.shared.launchView == .toolbar && !RecordingToolbar.shared.isVisible
+                && RecordingCoordinator.shared.phase == .idle {
+                RecordingToolbar.shared.show()
+            } else {
+                WindowManager.shared.showHome()
+            }
+        }
         return true
     }
 
@@ -223,6 +238,11 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 
     var anyEditorController: EditorWindowController? { editors.values.first }
+
+    /// Whether the home window, Settings or an editor is on screen.
+    var hasOpenWindows: Bool {
+        [homeWindow, settingsWindow].contains { $0?.isVisible == true } || editors.values.contains { $0.window?.isVisible == true }
+    }
 
     func editorController(for model: EditorModel) -> EditorWindowController? {
         editors.values.first { $0.model === model }

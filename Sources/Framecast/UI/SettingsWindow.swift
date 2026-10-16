@@ -138,6 +138,9 @@ private struct GeneralSettings: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
+        SettingRow(title: "When Framecast opens", detail: "Show the recording toolbar so you can record right away, or open the home window with your recordings.") {
+            Choice(options: LaunchView.allCases, selection: $app.launchView) { $0.label }
+        }
         SettingRow(title: "Appearance", detail: "Light, dark, or follow your Mac. The recording toolbar always stays dark.") {
             Choice(options: AppAppearance.allCases, selection: $app.appearance) { $0.label }
         }

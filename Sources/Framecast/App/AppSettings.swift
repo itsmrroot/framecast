@@ -10,6 +10,8 @@ final class AppSettings: ObservableObject {
     private let d = UserDefaults.standard
 
     // General
+    /// What appears when Framecast opens: the recording toolbar (like a camera app) or the home window.
+    @Published var launchView: LaunchView { didSet { d.set(launchView.rawValue, forKey: "app.launchView") } }
     @Published var appearance: AppAppearance { didSet { d.set(appearance.rawValue, forKey: "app.appearance"); applyAppearance() } }
     @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon() } }
 
@@ -54,6 +56,7 @@ final class AppSettings: ObservableObject {
             "export.quality": ExportQuality.high.rawValue,
             "export.codec": ExportCodec.h264.rawValue,
         ])
+        launchView = LaunchView(rawValue: d.string(forKey: "app.launchView") ?? "") ?? .toolbar
         appearance = AppAppearance(rawValue: d.string(forKey: "app.appearance") ?? "") ?? .dark
         hideDockIcon = d.bool(forKey: "app.hideDock")
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
@@ -164,6 +167,12 @@ final class AppSettings: ObservableObject {
         }
         try? SMAppService.mainApp.unregister()
     }
+}
+
+enum LaunchView: String, CaseIterable, Identifiable {
+    case toolbar, home
+    var id: String { rawValue }
+    var label: String { self == .toolbar ? "Recording toolbar" : "Home window" }
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {

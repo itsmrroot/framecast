@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3
+
+- Framecast now opens straight to the recording toolbar, ready to record. Prefer the home window? Settings → General → When Framecast opens
+- Open the home window any time from the toolbar's folder button or ⚙ menu → Open Framecast Window
+- Clicking the Dock icon shows the toolbar, or the home window if the toolbar is already open
+
 ## 1.3.2
 
 - Six new wallpaper categories drawn by Framecast: Aurora, Waves, Glass, Radiant, Midnight and Mesh (8 each, created the first time you open them)
