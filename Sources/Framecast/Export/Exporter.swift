@@ -71,6 +71,8 @@ struct ExportSettings {
     var gifFPS: Int = 20
     var gifWidth: Int = 960
     var disableHardwareAcceleration = false
+
+    static let frameRates = [60, 50, 30, 25, 24, 20, 10]
 }
 
 struct ExportJob {

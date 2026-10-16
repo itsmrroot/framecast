@@ -88,7 +88,7 @@ final class AppSettings: ObservableObject {
     var exportSettings: ExportSettings {
         var s = ExportSettings()
         s.format = ExportFormat(rawValue: exportFormat) ?? .mp4
-        s.fps = [24, 30, 60].contains(exportFPS) ? exportFPS : 60
+        s.fps = ExportSettings.frameRates.contains(exportFPS) ? exportFPS : 60
         s.resolution = ExportResolution(rawValue: exportResolution) ?? .p1080
         s.quality = ExportQuality(rawValue: exportQuality) ?? .high
         s.codec = ExportCodec(rawValue: exportCodec) ?? .h264
@@ -182,7 +182,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 // MARK: - Shortcuts
 
 enum ShortcutAction: String, CaseIterable, Identifiable {
-    case toggleRecording, pauseResume, restart, flag, recordDisplay, recordWindow, recordArea, toggleControls
+    case toggleRecording, pauseResume, restart, flag, recordDisplay, recordWindow, recordArea, toggleControls, notes, prompter
     var id: String { rawValue }
 
     var title: String {
@@ -195,6 +195,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .recordWindow: return "Record single window"
         case .recordArea: return "Record area"
         case .toggleControls: return "Show / hide recording controls"
+        case .notes: return "Show / hide speaker notes"
+        case .prompter: return "Start / stop scrolling speaker notes"
         }
     }
 
@@ -217,6 +219,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .recordWindow: return "macwindow"
         case .recordArea: return "rectangle.dashed"
         case .toggleControls: return "rectangle.inset.bottomright.filled"
+        case .notes: return "text.alignleft"
+        case .prompter: return "text.line.first.and.arrowtriangle.forward"
         }
     }
 
@@ -231,6 +235,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .recordWindow: return KeyCombo(keyCode: kVK_ANSI_4, modifiers: co)
         case .recordArea: return KeyCombo(keyCode: kVK_ANSI_5, modifiers: co)
         case .toggleControls: return KeyCombo(keyCode: kVK_ANSI_Quote, modifiers: co)
+        case .notes: return KeyCombo(keyCode: kVK_ANSI_Slash, modifiers: co)
+        case .prompter: return KeyCombo(keyCode: kVK_ANSI_Period, modifiers: co)
         }
     }
 }
@@ -345,10 +351,12 @@ final class HotKeyCenter {
         case .pauseResume: rec.togglePause()
         case .restart: rec.restart()
         case .flag: rec.addFlag()
-        case .recordDisplay: RecordingToolbar.shared.start(.display)
+        case .recordDisplay: RecordingToolbar.shared.start(.display, immediate: true)
         case .recordWindow: RecordingToolbar.shared.start(.window)
         case .recordArea: RecordingToolbar.shared.start(.area)
         case .toggleControls: rec.toggleControls()
+        case .notes: SpeakerNotes.shared.toggle()
+        case .prompter: SpeakerNotes.shared.toggleScrolling()
         }
     }
 }

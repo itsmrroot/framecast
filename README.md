@@ -65,6 +65,9 @@ Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it check
 - Record an iPhone or iPad connected by cable
 - Recording flags (<kbd>⌘</kbd> <kbd>⌥</kbd> <kbd>⌃</kbd> <kbd>F</kbd>) mark moments that show up on the timeline
 - Dims everything outside the recorded area while recording
+- Hover a display to confirm before recording; an editable recording area with handles, typed sizes, aspect presets and saved sizes
+- Skippable "Get ready" countdown (3, 5 or 10 s)
+- Speaker notes / teleprompter (<kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>/</kbd>), hidden from the recording
 - Record a full display, a single window (with a thumbnail picker), or a dragged area
 - System audio, microphone and webcam, each saved to its own file and kept in sync
 - 3 s or 5 s countdown, pause and resume, restart, cancel
@@ -81,13 +84,15 @@ Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it check
 <summary><b>✂️ Editor</b></summary>
 
 - **Zoom:** generated automatically from click clusters with smooth log-space easing. Add your own by clicking the zoom lane, then drag to move or resize it. Set the zoom level, and choose whether it follows the cursor or stays on a fixed point.
-- **Camera:** follows the cursor using a dead zone and spring damping
-- **Cursor:** smoothing, size, high-res vector arrow, motion blur, ripple or ring click effects, a press animation, hide when idle
+- **Camera:** follows the cursor using a dead zone and spring damping, with Focused and Smooth animation styles and cinematic screen motion blur
+- **Crop:** trim the recording to any area or aspect; the cursor, zooms and effects follow
+- **Cursor:** six styles, smoothing presets, size, rotation (fixed, tilt or follow), motion blur, ripple or ring click effects, a press animation, hide when idle, shake removal, stop at the end, loop back to the start
 - **Background:** macOS wallpapers, 16 gradients, solid colours or your own image, with optional blur
-- **Frame:** padding, rounded corners, shadow strength and softness
+- **Frame:** padding, rounded corners, classic or directional shadow, inset border; custom two-color gradients with hue; Reset on every slider
 - **Aspect ratio:** Auto, 16:9, 4:3, 5:4, 1:1, 4:5, 9:16, 3:4
 - **Webcam:** circle, rounded or square shape, four positions, size, mirror, border
-- **Timeline:** filmstrip, split, cut, trim by dragging clip edges, per-clip speed from 0.5× to 8× with pitch preserved
+- **Timeline:** filmstrip, audio waveform, blade tool, cut markers, trim by dragging clip edges, per-clip speed from 0.5× to 24× with pitch preserved, apply speed to all
+- **Command palette** (<kbd>⌘</kbd> <kbd>K</kbd>) with every command, and <kbd>⌘</kbd> <kbd>1</kbd>–<kbd>7</kbd> to switch panels
 - **Effects lane:** add blur, spotlight, title, hide-cursor and camera-layout effects. They can overlap, so you can blur several areas at once. Draw each area on a frame of the recording.
 - **Captions:** on-device transcription in any language macOS supports, with editable lines, adjustable size and SRT export
 - **Keystrokes:** show shortcuts only or everything you type, at any size

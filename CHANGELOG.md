@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0
+
+- Cinematic motion blur on the whole screen while zooming and panning, plus Focused and Smooth animation styles (new Animation panel)
+- Crop the recording: drag a box with handles, pick an aspect, and the cursor, zooms and effects follow
+- Cursor styles (Classic, Thin, High contrast, Warm, Touch), rotation (fixed, tilt or follow), remove shakes, stop moving at the end, loop back to the start, and no more cursor flicker
+- Command palette (⌘K) with every editor command, and ⌘1–⌘7 to switch panels
+- Timeline: audio waveform, blade tool (scissors button or hold ⌥), cut markers, a preview before adding a zoom, and "Apply speed to all clips" with 16× and 24× speeds
+- Recording: hover a display to confirm before recording, an editable area with handles, typed sizes, aspect presets and saved sizes, and a skippable "Get ready" countdown with a 10-second option
+- Speaker notes / teleprompter (⌥⌘/ to show, ⌥⌘. to scroll), hidden from the recording
+- Directional shadow, inset border, custom two-color gradients with a hue slider, random wallpaper, Reset buttons on sliders
+- Quick export to clipboard (⌥⌘C) or file (⌥⌘S), more frame rates (10–60 fps), loop playback, instant zooms, start zooms early, and a Disable toggle for effects
+- Fixes: the export window cut off "Web (Low)", Settings showed two selected tabs, and the recording toolbar now sits in the middle of the screen
+
 ## 1.2.0
 
 - New app icon

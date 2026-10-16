@@ -5,7 +5,12 @@ import Carbon.HIToolbox
 @MainActor
 final class EditorUIState: ObservableObject {
     @Published var showExport = false
+    @Published var showCrop = false
+    @Published var showPalette = false
     @Published var inspectorTab: InspectorTab = .background
+    /// Quick export in progress (0…1) and its status line.
+    @Published var quickProgress: Double?
+    @Published var quickStatus: String?
 }
 
 @MainActor
@@ -41,6 +46,104 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     func showExport() { ui.showExport = true }
+    func showCrop() { ui.showCrop = true }
+    func showPalette() { ui.showPalette = true }
+
+    func showPanel(_ tab: InspectorTab) {
+        model.selection = .none
+        ui.inspectorTab = tab
+    }
+
+    /// Exports with the Quick export settings: to the clipboard (and the Exports folder), or to a file you choose.
+    func quickExport(toFile: Bool) {
+        guard ui.quickProgress == nil, let job = model.exportJob() else { NSSound.beep(); return }
+        let settings = AppSettings.shared.exportSettings
+        let ext = settings.format.fileExtension
+        let url: URL
+        if toFile {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")).\(ext)"
+            panel.allowedContentTypes = [settings.format == .mp4 ? .mpeg4Movie : .gif]
+            panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            guard panel.runModal() == .OK, let u = panel.url else { return }
+            url = u
+        } else {
+            url = ProjectLibrary.shared.uniqueExportURL(name: model.doc.name, ext: ext)
+        }
+        model.player.pause()
+        ui.quickProgress = 0
+        ui.quickStatus = toFile ? "Exporting…" : "Exporting to clipboard…"
+        let ui = self.ui
+        Task {
+            do {
+                try await Exporter().export(job: job, settings: settings, to: url) { p in
+                    DispatchQueue.main.async { ui.quickProgress = p }
+                }
+                if toFile {
+                    ui.quickStatus = "Saved \(url.lastPathComponent)"
+                } else {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.writeObjects([url as NSURL])
+                    ui.quickStatus = "Copied. Paste it anywhere."
+                }
+            } catch {
+                ui.quickStatus = "Export failed: \(error.localizedDescription)"
+            }
+            ui.quickProgress = nil
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if ui.quickProgress == nil { ui.quickStatus = nil }
+        }
+    }
+
+    /// Everything the command palette offers.
+    func paletteCommands() -> [PaletteCommand] {
+        let m = model
+        var c: [PaletteCommand] = [
+            PaletteCommand(id: "play", group: "Playback", title: m.isPlaying ? "Pause" : "Play", icon: "playpause", shortcut: "Space") { m.togglePlay() },
+            PaletteCommand(id: "start", group: "Playback", title: "Go to start", icon: "backward.end", shortcut: "Home") { m.seek(comp: 0) },
+            PaletteCommand(id: "loop", group: "Playback", title: "Loop playback", icon: "repeat", isOn: m.loopPlayback) { m.loopPlayback.toggle() },
+            PaletteCommand(id: "split", group: "Timeline", title: "Cut clip at playhead", icon: "scissors", shortcut: "C") { m.splitAtPlayhead() },
+            PaletteCommand(id: "blade", group: "Timeline", title: "Blade tool", icon: "scissors.circle", shortcut: "hold ⌥",
+                           hint: "Click the clip lane to cut", isOn: m.bladeMode) { m.bladeMode.toggle() },
+            PaletteCommand(id: "slice", group: "Timeline", title: "Remove slice before playhead", icon: "scissors.badge.ellipsis", shortcut: "X") { m.removeSliceBefore() },
+            PaletteCommand(id: "resetSpeed", group: "Timeline", title: "Reset all speeds to 1×", icon: "gauge.with.dots.needle.33percent") { m.resetSpeeds() },
+            PaletteCommand(id: "idle4", group: "Smart speed", title: "Speed up idle moments 4×", icon: "hare") { m.applySmartSpeed(.idle, speed: 4) },
+            PaletteCommand(id: "idleCut", group: "Smart speed", title: "Cut idle moments", icon: "hare") { m.applySmartSpeed(.idle, speed: nil) },
+            PaletteCommand(id: "typing", group: "Smart speed", title: "Speed up typing 2×", icon: "keyboard", enabled: !m.keys.isEmpty) { m.applySmartSpeed(.typing, speed: 2) },
+            PaletteCommand(id: "addZoom", group: "Zoom", title: "Add zoom at playhead", icon: "plus.magnifyingglass", shortcut: "Z") { m.addZoom(at: m.sourceTime) },
+            PaletteCommand(id: "genZoom", group: "Zoom", title: "Generate zooms from clicks", icon: "wand.and.stars",
+                           enabled: !m.cursorTrack.clicks.isEmpty) { m.regenerateAutoZooms() },
+            PaletteCommand(id: "offZoom", group: "Zoom", title: "Disable all zooms", icon: "eye.slash", isOn: m.doc.style.zoomsDisabled) {
+                m.edit(.render) { $0.style.zoomsDisabled.toggle() }
+            },
+            PaletteCommand(id: "rmZoom", group: "Zoom", title: "Remove all zooms", icon: "trash", enabled: !m.doc.zooms.isEmpty) { m.removeAllZooms() },
+            PaletteCommand(id: "crop", group: "Editor", title: "Crop recording…", icon: "crop") { [weak self] in self?.showCrop() },
+            PaletteCommand(id: "export", group: "Export", title: "Export…", icon: "square.and.arrow.up", shortcut: "⌘E") { [weak self] in self?.showExport() },
+            PaletteCommand(id: "qcopy", group: "Export", title: "Quick export to clipboard", icon: "doc.on.clipboard", shortcut: "⌥⌘C") { [weak self] in self?.quickExport(toFile: false) },
+            PaletteCommand(id: "qsave", group: "Export", title: "Quick export to file…", icon: "square.and.arrow.down", shortcut: "⌥⌘S") { [weak self] in self?.quickExport(toFile: true) },
+            PaletteCommand(id: "finder", group: "Project", title: "Show project in Finder", icon: "folder") { NSWorkspace.shared.activateFileViewerSelecting([m.folder]) },
+            PaletteCommand(id: "save", group: "Project", title: "Save", icon: "square.and.arrow.down.on.square", shortcut: "⌘S") { m.saveNow() },
+            PaletteCommand(id: "undo", group: "Project", title: "Undo", icon: "arrow.uturn.backward", shortcut: "⌘Z", enabled: m.canUndo) { m.undo() },
+            PaletteCommand(id: "redo", group: "Project", title: "Redo", icon: "arrow.uturn.forward", shortcut: "⇧⌘Z", enabled: m.canRedo) { m.redo() },
+            PaletteCommand(id: "quality", group: "View", title: m.previewFull ? "Preview quality: half (faster)" : "Preview quality: full",
+                           icon: "circle.hexagongrid") { m.previewFull.toggle() },
+            PaletteCommand(id: "theme", group: "View", title: "Switch light / dark mode", icon: "circle.lefthalf.filled") { AppSettings.shared.toggleAppearance() },
+            PaletteCommand(id: "settings", group: "Application", title: "Settings…", icon: "gearshape", shortcut: "⌘,") { WindowManager.shared.showSettings() },
+        ]
+        for kind in EffectKind.allCases {
+            c.append(PaletteCommand(id: "fx-\(kind.rawValue)", group: "Effects", title: "Add \(kind.label.lowercased())", icon: kind.icon,
+                                    shortcut: kind == .blur ? "B" : (kind == .text ? "T" : nil),
+                                    enabled: !kind.needsCamera || m.doc.info.hasWebcam) { m.addEffect(kind) })
+        }
+        for tab in InspectorTab.allCases {
+            c.append(PaletteCommand(id: "panel-\(tab.rawValue)", group: "Sidebar", title: "Show \(tab.label) panel", icon: tab.icon,
+                                    shortcut: "⌘\(tab.number)") { [weak self] in self?.showPanel(tab) })
+        }
+        for p in PresetStore.shared.presets {
+            c.append(PaletteCommand(id: "preset-\(p.id)", group: "Presets", title: "Apply preset “\(p.name)”", icon: "sparkles") { m.applyPreset(p.style) })
+        }
+        return c
+    }
 
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -121,6 +224,30 @@ struct EditorView: View {
         .sheet(isPresented: $ui.showExport) {
             ExportSheet(model: model, isPresented: $ui.showExport)
         }
+        .sheet(isPresented: $ui.showCrop) {
+            CropSheet(model: model, isPresented: $ui.showCrop)
+        }
+        .sheet(isPresented: $ui.showPalette) {
+            CommandPaletteView(commands: WindowManager.shared.editorController(for: model)?.paletteCommands() ?? [],
+                               isPresented: $ui.showPalette)
+        }
+        .overlay(alignment: .top) {
+            if let status = ui.quickStatus {
+                HStack(spacing: 10) {
+                    if let p = ui.quickProgress {
+                        ProgressView(value: p).tint(Theme.accent).frame(width: 120)
+                    } else {
+                        Image(systemName: status.hasPrefix("Export failed") ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .foregroundStyle(status.hasPrefix("Export failed") ? .orange : .green)
+                    }
+                    Text(status).font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Capsule().fill(Theme.raised).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+                .padding(.top, 62)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .overlay {
             if let err = model.loadError {
                 VStack(spacing: 10) {
@@ -167,8 +294,7 @@ private struct EditorToolbar: View {
                 IconButton(icon: "trash", help: "Move project to Trash") { confirmTrash = true }
                 Spacer()
                 AppearanceButton()
-                IconButton(icon: "command", help: "Keyboard shortcuts") { showShortcuts.toggle() }
-                    .popover(isPresented: $showShortcuts, arrowEdge: .bottom) { ShortcutsPopover() }
+                IconButton(icon: "command", help: "Command palette (⌘K)") { ui.showPalette = true }
                 Rectangle().fill(Theme.border).frame(width: 1, height: 18)
                 IconButton(icon: "arrow.uturn.backward", help: "Undo (⌘Z)", disabled: !model.canUndo) { model.undo() }
                 IconButton(icon: "arrow.uturn.forward", help: "Redo (⇧⌘Z)", disabled: !model.canRedo) { model.redo() }
@@ -319,6 +445,14 @@ private struct PreviewArea: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .help("Aspect ratio")
+                Button {
+                    WindowManager.shared.editorController(for: model)?.showCrop()
+                } label: {
+                    Label(model.doc.style.crop == nil ? "Crop" : "Cropped", systemImage: "crop")
+                        .foregroundStyle(model.doc.style.crop == nil ? Theme.text : Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Crop the recording")
                 Spacer()
                 Menu {
                     Button { model.previewFull = true } label: { if model.previewFull { Label("Full", systemImage: "checkmark") } else { Text("Full") } }
@@ -376,7 +510,9 @@ private struct TransportBar: View {
     var body: some View {
         ZStack {
             HStack {
-                IconButton(icon: "scissors", help: "Cut clip at playhead (C)") { model.splitAtPlayhead() }
+                IconButton(icon: model.bladeMode ? "scissors.circle.fill" : "scissors",
+                           help: "Blade tool: click the clip lane to cut (or hold ⌥). C cuts at the playhead.",
+                           tint: model.bladeMode ? Theme.accent : Theme.text) { model.bladeMode.toggle() }
                 Spacer()
                 IconButton(icon: "camera", help: "Save this frame as an image") { saveFrame() }
                     .disabled(!model.isReady)

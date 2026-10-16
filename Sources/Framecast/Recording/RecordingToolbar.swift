@@ -33,7 +33,8 @@ final class RecordingToolbar: ObservableObject {
         if let p = panel {
             func place() {
                 let size = p.contentView?.fittingSize ?? p.frame.size
-                p.setFrame(CGRect(x: screen.visibleFrame.midX - size.width / 2, y: screen.visibleFrame.minY + 40,
+                // Centred on screen, where it's easy to find and doesn't cover the Dock.
+                p.setFrame(CGRect(x: screen.visibleFrame.midX - size.width / 2, y: screen.visibleFrame.midY - size.height / 2,
                                   width: size.width, height: size.height), display: true)
             }
             place()
@@ -53,19 +54,32 @@ final class RecordingToolbar: ObservableObject {
     }
 
     /// Picks the source for `kind` (window picker, area selection…), then starts recording.
-    func start(_ kind: CaptureKind) {
+    /// `immediate` skips the display confirm step (used by the global "record display" shortcut).
+    func start(_ kind: CaptureKind, immediate: Bool = false) {
         guard RecordingCoordinator.shared.phase == .idle else { return }
         let settings = RecorderSettings.shared
         let screen = NSScreen.withMouse
         switch kind {
-        case .display:
+        case .display where immediate:
             settings.displayID = screen.displayID
             begin(.display)
+        case .display:
+            // Confirm on the display itself first (hover a display, then Start recording).
+            panel?.orderOut(nil)
+            Task {
+                if let picked = await DisplayPicker.pick() {
+                    settings.displayID = picked.displayID
+                    begin(.display)
+                } else {
+                    panel?.orderFrontRegardless()
+                }
+            }
         case .area:
             panel?.orderOut(nil)
             Task {
                 try? await Task.sleep(nanoseconds: 150_000_000)
-                if let rect = await AreaSelector.select(on: screen) {
+                let initial = settings.displayID == screen.displayID ? settings.areaRect : nil
+                if let rect = await AreaSelector.select(on: screen, initial: initial) {
                     settings.displayID = screen.displayID
                     settings.areaRect = rect
                     begin(.area)
@@ -237,20 +251,25 @@ struct RecordingToolbarView: View {
             .padding(.leading, 12)
 
             Menu {
+                Section("While recording") {
+                    Toggle("Hide desktop icons", isOn: $settings.hideDesktopIcons)
+                    Toggle("Highlight recorded area", isOn: $app.highlightRecordedArea)
+                    Toggle("Record keystrokes", isOn: Binding(get: { settings.recordKeystrokes }, set: { on in
+                        settings.recordKeystrokes = on
+                        if on && !KeystrokeRecorder.isTrusted { KeystrokeRecorder.requestTrust() }
+                    }))
+                    Button(SpeakerNotes.shared.isVisible ? "Hide Speaker Notes" : "Show Speaker Notes") { SpeakerNotes.shared.toggle() }
+                }
+                Section("After recording") {
+                    Toggle("Create zooms automatically", isOn: $settings.autoZoom)
+                    Toggle("Open quick export widget", isOn: $app.showQuickExportWidget)
+                }
                 Picker("Countdown", selection: $settings.countdown) {
-                    Text("No countdown").tag(0); Text("3 seconds").tag(3); Text("5 seconds").tag(5)
+                    Text("No countdown").tag(0); Text("3 seconds").tag(3); Text("5 seconds").tag(5); Text("10 seconds").tag(10)
                 }
                 Picker("Frame rate", selection: $settings.fps) {
                     Text("30 fps").tag(30); Text("60 fps").tag(60)
                 }
-                Divider()
-                Toggle("Create zooms automatically", isOn: $settings.autoZoom)
-                Toggle("Hide desktop icons", isOn: $settings.hideDesktopIcons)
-                Toggle("Highlight recorded area", isOn: $app.highlightRecordedArea)
-                Toggle("Record keystrokes", isOn: Binding(get: { settings.recordKeystrokes }, set: { on in
-                    settings.recordKeystrokes = on
-                    if on && !KeystrokeRecorder.isTrusted { KeystrokeRecorder.requestTrust() }
-                }))
                 Divider()
                 Button("Settings…") { WindowManager.shared.showSettings() }
             } label: {

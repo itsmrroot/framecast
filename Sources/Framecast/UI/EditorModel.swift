@@ -32,6 +32,11 @@ final class EditorModel: ObservableObject {
     @Published var selection: Selection = .none
     @Published private(set) var editMap: EditMap
     @Published private(set) var filmstrip: [CGImage] = []
+    /// Audio loudness over source time (0…1 per bin), for the timeline waveform.
+    @Published private(set) var waveform: [Float] = []
+    /// Blade tool: clicking the clip lane cuts there.
+    @Published var bladeMode = false
+    @Published var loopPlayback = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
     @Published private(set) var outputAspect: CGFloat = 16.0 / 9.0
@@ -50,6 +55,7 @@ final class EditorModel: ObservableObject {
     private var lastEditTime = Date.distantPast
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
+    private var endObserver: NSObjectProtocol?
     private var saveWork: DispatchWorkItem?
     private var renderRefreshPending = false
     private var isSeeking = false
@@ -77,6 +83,13 @@ final class EditorModel: ObservableObject {
                 self.compTime = t.seconds
             }
         }
+        endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, self.loopPlayback, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
+                self.seek(comp: 0)
+                self.player.rate = max(self.playbackRate, 1)
+            }
+        }
         statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
             let playing = p.timeControlStatus != .paused
             DispatchQueue.main.async { self?.isPlaying = playing }
@@ -87,6 +100,7 @@ final class EditorModel: ObservableObject {
 
     deinit {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
 
     private func load() async {
@@ -109,6 +123,7 @@ final class EditorModel: ObservableObject {
             rebuildComposition()
             isReady = true
             await generateFilmstrip()
+            waveform = await Self.loadWaveform(assets: assets, duration: sourceDuration)
         } catch {
             loadError = error.localizedDescription
         }
@@ -206,10 +221,21 @@ final class EditorModel: ObservableObject {
 
     private func cursorPath() -> CursorPath? {
         guard !cursorTrack.isEmpty else { return nil }
-        let key = "\(doc.style.cursorSmoothing)-\(doc.style.hideIdleCursor)-\(doc.info.duration)"
+        let st = doc.style
+        let crop = (st.crop?.isFull ?? true) ? CropRect.full : st.crop!
+        // Source times for "stop at the end" and "loop", which are measured on the edited video.
+        let freeze = st.cursorStopAtEnd > 0.01 ? editMap.sourceTime(comp: max(0, editMap.duration - st.cursorStopAtEnd)) : nil
+        let firstSource = editMap.segments.first?.srcStart ?? 0
+        let loop = st.loopCursor && editMap.duration > 2
+            ? (home: firstSource, from: editMap.sourceTime(comp: editMap.duration - 1.2),
+               until: editMap.sourceTime(comp: max(0, editMap.duration - 0.1)))
+            : nil
+        let key = "\(st.cursorSmoothing)-\(st.hideIdleCursor)-\(doc.info.duration)-\(crop)-\(st.removeCursorShakes)-\(st.cursorShakeThreshold)-\(String(describing: freeze))-\(String(describing: loop))"
         if let c = cursorPathCache, c.key == key { return c.path }
-        let p = CursorPath(track: cursorTrack, duration: doc.info.duration + 1,
-                           smoothing: doc.style.cursorSmoothing, hideWhenIdle: doc.style.hideIdleCursor)
+        let p = CursorPath(track: cursorTrack.cropped(crop), duration: doc.info.duration + 1,
+                           smoothing: st.cursorSmoothing, hideWhenIdle: st.hideIdleCursor,
+                           shakeThreshold: st.removeCursorShakes ? st.cursorShakeThreshold : nil,
+                           freezeFrom: freeze, loop: loop)
         cursorPathCache = (key, p)
         return p
     }
@@ -505,6 +531,23 @@ final class EditorModel: ObservableObject {
         return ranges.count
     }
 
+    func applySpeedToAll(_ speed: Double) {
+        edit(.timeline) { d in d.clips = d.clips.map { var c = $0; c.speed = speed; return c } }
+    }
+
+    /// Splits the clip under a source time (the blade tool).
+    func split(at t: Double) {
+        guard let idx = doc.clips.firstIndex(where: { t > $0.start + 0.1 && t < $0.end - 0.1 }) else { NSSound.beep(); return }
+        edit(.timeline) { d in
+            let c = d.clips[idx]
+            var a = c, b = c
+            a.end = t
+            b.id = UUID()
+            b.start = t
+            d.clips.replaceSubrange(idx...idx, with: [a, b])
+        }
+    }
+
     func resetSpeeds() {
         edit(.timeline) { d in d.clips = d.clips.map { var c = $0; c.speed = 1; return c } }
     }
@@ -593,10 +636,50 @@ final class EditorModel: ObservableObject {
         filmstrip = images
     }
 
-    func rawFrame(at source: Double) async -> CGImage? {
+    /// Peak loudness of system audio and microphone, mixed, in ~1500 bins across the recording.
+    nonisolated static func loadWaveform(assets: ProjectAssets, duration: Double) async -> [Float] {
+        let bins = 1500
+        var peaks = [Float](repeating: 0, count: bins)
+        let sources: [(AVAsset, AVAssetTrack)] = [
+            assets.systemAudio.map { (assets.screenAsset as AVAsset, $0) },
+            assets.mic.flatMap { t in assets.micAsset.map { ($0 as AVAsset, t) } },
+        ].compactMap { $0 }
+        guard !sources.isEmpty, duration > 0 else { return [] }
+        for (asset, track) in sources {
+            guard let reader = try? AVAssetReader(asset: asset) else { continue }
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                // 8 kHz mono float is plenty for a waveform (lower rates aren't accepted and raise an exception).
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 8000, AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsBigEndianKey: false,
+            ])
+            guard reader.canAdd(out) else { continue }
+            reader.add(out)
+            guard reader.startReading() else { continue }
+            while let sb = out.copyNextSampleBuffer(), let block = sb.dataBuffer {
+                let start = sb.presentationTimeStamp.seconds
+                var length = 0
+                var ptr: UnsafeMutablePointer<CChar>?
+                guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length,
+                                                  dataPointerOut: &ptr) == noErr, let ptr else { continue }
+                let count = length / MemoryLayout<Float>.size
+                ptr.withMemoryRebound(to: Float.self, capacity: count) { samples in
+                    for i in stride(from: 0, to: count, by: 8) {
+                        let t = start + Double(i) / 8000
+                        let b = Int(t / duration * Double(bins))
+                        guard b >= 0 && b < bins else { continue }
+                        peaks[b] = max(peaks[b], abs(samples[i]))
+                    }
+                }
+            }
+        }
+        let top = max(peaks.max() ?? 0, 0.0001)
+        return peaks.map { min(1, sqrt($0 / top)) }
+    }
+
+    func rawFrame(at source: Double, maxSize: CGFloat = 800) async -> CGImage? {
         guard let assets else { return nil }
         let gen = AVAssetImageGenerator(asset: assets.screenAsset)
-        gen.maximumSize = CGSize(width: 800, height: 800)
+        gen.maximumSize = CGSize(width: maxSize, height: maxSize)
         gen.requestedTimeToleranceBefore = CMTime(sec: 0.1)
         gen.requestedTimeToleranceAfter = CMTime(sec: 0.1)
         return try? await gen.image(at: CMTime(sec: source)).image

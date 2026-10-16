@@ -67,6 +67,7 @@ struct SettingsWindowView: View {
         }
         .frame(width: 760, height: 620)
         .background(Theme.bg)
+        .focusEffectDisabled()
     }
 }
 
@@ -200,7 +201,7 @@ private struct RecordingSettings: View {
             Choice(options: [720, 1080, 2160], selection: $app.cameraResolution) { $0 == 2160 ? "4K" : "\($0)p" }
         }
         SettingRow(title: "Countdown", detail: "Seconds to get ready before recording starts.") {
-            Choice(options: [0, 3, 5], selection: $rec.countdown) { $0 == 0 ? "Off" : "\($0)s" }
+            Choice(options: [0, 3, 5, 10], selection: $rec.countdown) { $0 == 0 ? "Off" : "\($0)s" }
         }
         SettingRow(title: "Frame rate", detail: "60 fps looks smoother; 30 fps makes smaller files.") {
             Choice(options: [30, 60], selection: $rec.fps) { "\($0) fps" }
@@ -250,7 +251,11 @@ private struct ExportSettingsPane: View {
                         Choice(options: ["mp4", "gif"], selection: $app.exportFormat) { $0.uppercased() }
                     }
                     group("Frame rate", icon: "speedometer") {
-                        Choice(options: [24, 30, 60], selection: $app.exportFPS) { "\($0) FPS" }
+                        Picker("", selection: $app.exportFPS) {
+                            ForEach(ExportSettings.frameRates, id: \.self) { Text("\($0) FPS").tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 120)
                     }
                 }
                 group("Resolution", icon: "rectangle.dashed") {

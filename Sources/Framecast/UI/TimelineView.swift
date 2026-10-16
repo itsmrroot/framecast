@@ -6,6 +6,11 @@ struct TimelineView: View {
     @State private var zoomLevel: CGFloat = 1
     @State private var drag: DragState?
     @State private var newZoom: (Double, Double)?
+    /// Pointer position over the clip lane (for the blade line) and the zoom lane (for the add-zoom ghost).
+    @State private var clipHoverX: CGFloat?
+    @State private var zoomHoverX: CGFloat?
+
+    private var bladeActive: Bool { model.bladeMode || NSEvent.modifierFlags.contains(.option) }
 
     struct DragState {
         enum Kind { case clipLeft, clipRight, zoomMove, zoomLeft, zoomRight, effectMove, effectLeft, effectRight }
@@ -97,6 +102,7 @@ struct TimelineView: View {
             }
             Image(systemName: "minus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
             Slider(value: $zoomLevel, in: 1...12).controlSize(.mini).frame(width: 110).tint(Theme.accent)
+                .help("Timeline zoom: about \(Int(model.sourceDuration / Double(zoomLevel))) seconds visible")
             Image(systemName: "plus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
         }
         .padding(.horizontal, 12)
@@ -159,6 +165,14 @@ struct TimelineView: View {
                 }
                 t += step
             }
+            // Scissors badges where one clip ends and the next begins.
+            let sortedClips = model.doc.clips.sorted { $0.start < $1.start }
+            for (a, b) in zip(sortedClips, sortedClips.dropFirst()) where abs(a.end - b.start) < 0.01 {
+                let x = CGFloat(b.start) * pps
+                let badge = CGRect(x: x - 7, y: 1, width: 14, height: 14)
+                ctx.fill(Path(ellipseIn: badge), with: .color(Theme.clip))
+                ctx.draw(Image(systemName: "scissors").resizable(), in: badge.insetBy(dx: 3, dy: 3))
+            }
             for f in model.doc.flags {
                 let x = CGFloat(f) * pps
                 var flag = Path()
@@ -213,8 +227,23 @@ struct TimelineView: View {
             ForEach(model.doc.clips) { c in
                 clipBlock(c, pps: pps)
             }
+
+            if !model.waveform.isEmpty {
+                waveform(width: width, pps: pps)
+                    .frame(width: width, height: clipH)
+                    .allowsHitTesting(false)
+            }
+
+            if let x = clipHoverX, bladeActive {
+                Rectangle().fill(Color.red).frame(width: 2, height: clipH + 8)
+                    .offset(x: x - 1, y: -4)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: width, height: clipH, alignment: .topLeading)
+        .onContinuousHover { phase in
+            if case .active(let p) = phase { clipHoverX = p.x } else { clipHoverX = nil }
+        }
     }
 
     private func clipBlock(_ c: Clip, pps: CGFloat) -> some View {
@@ -244,10 +273,16 @@ struct TimelineView: View {
                     .lineLimit(1)
                 }
             }
+            .opacity(isOtherClipSelected(c) ? 0.5 : 1)
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { v in
-                model.selection = .clip(c.id)
-                model.seek(source: s + Double(v.location.x / pps))
+                let t = s + Double(v.location.x / pps)
+                if bladeActive {
+                    model.split(at: t)
+                } else {
+                    model.selection = .clip(c.id)
+                    model.seek(source: t)
+                }
             })
             .overlay(alignment: .leading) { edgeHandle(color: Theme.clip, visible: selected) { dx, ended in
                 let b = model.clipBounds(c.id)
@@ -261,6 +296,35 @@ struct TimelineView: View {
             } }
             .frame(width: w, height: clipH)
             .offset(x: CGFloat(s) * pps)
+    }
+
+    private func isOtherClipSelected(_ c: Clip) -> Bool {
+        if case .clip(let id) = model.selection { return id != c.id }
+        return false
+    }
+
+    /// Mirrored loudness bars along the bottom of the clip lane, only where footage is kept.
+    private func waveform(width: CGFloat, pps: CGFloat) -> some View {
+        let peaks = model.waveform
+        let clips = model.doc.clips.map { clipRange($0) }
+        return Canvas { ctx, size in
+            let n = peaks.count
+            guard n > 1 else { return }
+            let mid = size.height - 16
+            let step: CGFloat = 3
+            var x: CGFloat = 0
+            var path = Path()
+            while x < size.width {
+                let t = Double(x / pps)
+                if clips.contains(where: { t >= $0.0 && t <= $0.1 }) {
+                    let i = min(n - 1, Int(t / max(model.sourceDuration, 0.01) * Double(n)))
+                    let h = max(1, CGFloat(peaks[i]) * 14)
+                    path.addRoundedRect(in: CGRect(x: x, y: mid - h, width: 1.6, height: h * 2), cornerSize: CGSize(width: 0.8, height: 0.8))
+                }
+                x += step
+            }
+            ctx.fill(path, with: .color(Color.black.opacity(0.35)))
+        }
     }
 
     private func filmstrip(width: CGFloat, pps: CGFloat) -> some View {
@@ -310,8 +374,21 @@ struct TimelineView: View {
                             .offset(x: CGFloat(min(a, b)) * pps)
                     }
                 }
+                .overlay(alignment: .leading) {
+                    if newZoom == nil, let x = zoomHoverX, let (a, b) = ghostZoom(at: Double(x / pps)) {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Theme.zoom.opacity(0.28))
+                            .overlay(Image(systemName: "plus").font(.system(size: 12, weight: .bold)).foregroundStyle(.white))
+                            .frame(width: CGFloat(b - a) * pps, height: zoomH)
+                            .offset(x: CGFloat(a) * pps)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .frame(width: width, height: zoomH)
                 .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    if case .active(let p) = phase { zoomHoverX = p.x } else { zoomHoverX = nil }
+                }
                 .gesture(DragGesture(minimumDistance: 4)
                     .onChanged { v in
                         newZoom = (Double(v.startLocation.x / pps), Double(max(0, v.location.x) / pps))
@@ -331,6 +408,15 @@ struct TimelineView: View {
         .frame(width: width, height: zoomH, alignment: .topLeading)
     }
 
+    /// The zoom a click would add here: 3 s, or up to the next zoom.
+    private func ghostZoom(at t: Double) -> (Double, Double)? {
+        let sorted = model.doc.zooms.sorted { $0.start < $1.start }
+        if sorted.contains(where: { t >= $0.start && t <= $0.end }) { return nil }
+        let next = sorted.first { $0.start > t }?.start ?? model.sourceDuration
+        let end = min(t + 3, next - 0.05, model.sourceDuration)
+        return end - t >= 0.6 ? (t, end) : nil
+    }
+
     private func zoomBlock(_ z: ZoomSegment, pps: CGFloat) -> some View {
         let (s, e) = zoomRange(z)
         let selected = model.selection == .zoom(z.id)
@@ -344,12 +430,19 @@ struct TimelineView: View {
             )
             .overlay(alignment: .leading) {
                 if w > 54 {
-                    HStack(spacing: 4) {
-                        Image(systemName: z.mode == .fixed ? "scope" : "cursorarrow.motionlines")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("\(z.scale, specifier: "%.1f")×").font(.system(size: 11, weight: .bold))
-                        if w > 110 {
-                            Text(z.isAuto ? "Auto" : "Manual").font(.system(size: 10)).opacity(0.75)
+                    VStack(alignment: .leading, spacing: 1) {
+                        if w > 90 {
+                            Text(z.instant ? "Instant zoom" : (z.isAuto ? "Auto zoom" : "Zoom"))
+                                .font(.system(size: 9.5, weight: .medium)).opacity(0.7)
+                        }
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.magnifyingglass").font(.system(size: 9.5, weight: .semibold))
+                            Text("\(z.scale, specifier: "%.1f")×").font(.system(size: 11, weight: .bold))
+                            if w > 110 {
+                                Text("·").opacity(0.6)
+                                Image(systemName: z.mode == .fixed ? "scope" : "cursorarrow.motionlines").font(.system(size: 9.5))
+                                Text(z.mode == .fixed ? "Manual" : "Auto").font(.system(size: 10.5, weight: .semibold))
+                            }
                         }
                     }
                     .foregroundStyle(.white)

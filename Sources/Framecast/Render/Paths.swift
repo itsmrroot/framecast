@@ -15,8 +15,28 @@ final class CursorPath {
         var opacity: Double
     }
 
-    init(track: CursorTrack, duration: Double, smoothing: Double, hideWhenIdle: Bool) {
-        let samples = track.samples
+    /// - Parameters:
+    ///   - shakeThreshold: drop tiny jitter (0…1), nil to keep every movement.
+    ///   - freezeFrom: hold the cursor still from this source time on.
+    ///   - loop: ease back to the position at `home` between `from` and `until` (source times).
+    init(track: CursorTrack, duration: Double, smoothing: Double, hideWhenIdle: Bool,
+         shakeThreshold: Double? = nil, freezeFrom: Double? = nil, loop: (home: Double, from: Double, until: Double)? = nil) {
+        var samples = track.samples
+        if let threshold = shakeThreshold, threshold > 0, samples.count > 2 {
+            // Keep a sample only once it has moved far enough from the last kept one; trackpad noise and
+            // small back-and-forth shakes never get that far, deliberate movement does.
+            let eps = threshold * 0.006
+            var kept = [samples[0]]
+            for s in samples.dropFirst() {
+                let last = kept[kept.count - 1]
+                if hypot(s.x - last.x, s.y - last.y) >= eps { kept.append(s) }
+            }
+            if let lastRaw = samples.last, kept.last?.t != lastRaw.t,
+               let k = kept.last, hypot(lastRaw.x - k.x, lastRaw.y - k.y) >= eps / 3 {
+                kept.append(lastRaw)
+            }
+            samples = kept
+        }
         hasData = !samples.isEmpty
         let n = max(2, Int(duration * rate) + 2)
         var xs = [Float](repeating: 0.5, count: n)
@@ -72,6 +92,19 @@ final class CursorPath {
                 alpha[i] = Float(idle < 2.0 ? 1 : max(0, 1 - (idle - 2.0) / 0.35))
             }
         }
+        if let loop, loop.until > loop.from {
+            let home = clamp(Int(loop.home * rate), 0, n - 1)
+            let hx = xs[home], hy = ys[home]
+            for i in clamp(Int(loop.from * rate), 0, n - 1)..<n {
+                let w = Float(smootherstep((Double(i) / rate - loop.from) / (loop.until - loop.from)))
+                xs[i] += (hx - xs[i]) * w
+                ys[i] += (hy - ys[i]) * w
+            }
+        }
+        if let freezeFrom {
+            let f = clamp(Int(freezeFrom * rate), 0, n - 1)
+            for i in f..<n { xs[i] = xs[f]; ys[i] = ys[f] }
+        }
         self.xs = xs
         self.ys = ys
         self.alpha = alpha
@@ -104,14 +137,17 @@ final class CameraPath {
 
     /// - Parameter viewHalfExtent: half the canvas size divided by the screen size, at zoom 1
     ///   (i.e. how much of the screen, in normalised units, half the frame shows).
-    init(zooms: [ZoomSegment], cursor: CursorPath?, duration: Double, transition: Double, viewHalfExtent: CGSize) {
+    init(zooms: [ZoomSegment], cursor: CursorPath?, duration: Double, transition: Double, viewHalfExtent: CGSize,
+         animation: ScreenAnimation = .smooth, startEarly: Bool = false) {
         let n = max(2, Int(duration * rate) + 2)
         var scales = [Float](repeating: 1, count: n)
         var cx = [Float](repeating: 0.5, count: n)
         var cy = [Float](repeating: 0.5, count: n)
         let sorted = zooms.sorted { $0.start < $1.start }
         let dt = 1.0 / rate
-        let omega = 5.0
+        // Focused: a stiffer, quicker camera. Smooth: slower and floatier.
+        let omega = animation == .focused ? 9.0 : 5.0
+        let transition = animation == .focused ? transition * 0.7 : transition
 
         var c = CGPoint(x: 0.5, y: 0.5)
         var v = CGVector.zero
@@ -126,16 +162,19 @@ final class CameraPath {
             var best = 1.0
             var active: ZoomSegment?
             var rampEnd = 0.0
-            for z in sorted where t >= z.start && t <= z.end {
-                let T = max(0.05, min(transition, z.duration / 2))
-                let pIn = smootherstep((t - z.start) / T)
-                let pOut = smootherstep((z.end - t) / T)
+            for z in sorted {
+                let T = z.instant ? 0 : max(0.05, min(transition, z.duration / 2))
+                // "Start animation early": the zoom-in finishes as the block starts instead of after it.
+                let inStart = startEarly ? z.start - T : z.start
+                guard t >= inStart && t <= z.end else { continue }
+                let pIn = T > 0 ? smootherstep((t - inStart) / T) : 1
+                let pOut = T > 0 ? smootherstep((z.end - t) / T) : 1
                 // Interpolate in log space so the zoom feels linear.
                 let s = exp(log(max(1, z.scale)) * min(pIn, pOut))
                 if s >= best {
                     best = s
                     active = z
-                    rampEnd = z.start + T
+                    rampEnd = inStart + T
                 }
             }
 
@@ -149,7 +188,8 @@ final class CameraPath {
                 desired = cursorAt(t)
             }
 
-            if best <= 1.001 {
+            if best <= 1.001 || (active?.instant == true && t < (active?.start ?? 0) + 2 * dt) {
+                // At rest (or cutting straight into an instant zoom) the camera sits on its target.
                 c = desired
                 v = .zero
             } else {

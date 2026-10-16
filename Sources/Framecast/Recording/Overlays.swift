@@ -2,158 +2,88 @@ import AppKit
 import SwiftUI
 import Carbon.HIToolbox
 
-// MARK: - Area selection
-
-private final class KeyableWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
-private final class AreaSelectionView: NSView {
-    var onFinish: ((CGRect?) -> Void)?
-    private var startPoint: CGPoint?
-    private var current: CGRect?
-
-    override var acceptsFirstResponder: Bool { true }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
-
-    override func mouseDown(with event: NSEvent) {
-        startPoint = convert(event.locationInWindow, from: nil)
-        current = nil
-        needsDisplay = true
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let s = startPoint else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        current = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard let r = current, r.width > 20, r.height > 20 else {
-            startPoint = nil; current = nil; needsDisplay = true
-            return
-        }
-        // Convert to top-left origin, local to the screen.
-        let flipped = CGRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height).integral
-        onFinish?(flipped)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == UInt16(kVK_Escape) { onFinish?(nil) }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.45).setFill()
-        bounds.fill()
-        if let r = current {
-            NSColor.clear.setFill()
-            r.fill(using: .copy)
-            let path = NSBezierPath(rect: r.insetBy(dx: -0.5, dy: -0.5))
-            path.lineWidth = 1.5
-            NSColor.white.setStroke()
-            path.stroke()
-            let label = "\(Int(r.width)) × \(Int(r.height))" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.white,
-            ]
-            let size = label.size(withAttributes: attrs)
-            let box = CGRect(x: r.midX - size.width / 2 - 8, y: r.minY - size.height - 14, width: size.width + 16, height: size.height + 6)
-            NSColor.black.withAlphaComponent(0.75).setFill()
-            NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
-            label.draw(at: CGPoint(x: box.minX + 8, y: box.minY + 3), withAttributes: attrs)
-        } else {
-            let text = "Drag to select an area to record — Esc to cancel" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 18, weight: .medium),
-                .foregroundColor: NSColor.white,
-            ]
-            let size = text.size(withAttributes: attrs)
-            text.draw(at: CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attrs)
-        }
-    }
-}
-
-@MainActor
-enum AreaSelector {
-    private static var window: NSWindow?
-
-    /// Lets the user drag out a rectangle on the given screen. Returns a rect in screen-local points (top-left origin).
-    static func select(on screen: NSScreen) async -> CGRect? {
-        await withCheckedContinuation { cont in
-            let w = KeyableWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-            w.level = .screenSaver
-            w.isOpaque = false
-            w.backgroundColor = .clear
-            w.sharingType = .none
-            w.ignoresMouseEvents = false
-            w.setFrame(screen.frame, display: true)
-            let view = AreaSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
-            view.onFinish = { rect in
-                w.orderOut(nil)
-                window = nil
-                cont.resume(returning: rect)
-            }
-            w.contentView = view
-            window = w
-            NSApp.activate(ignoringOtherApps: true)
-            w.makeKeyAndOrderFront(nil)
-            w.makeFirstResponder(view)
-        }
-    }
-}
-
 // MARK: - Countdown
 
-private struct CountdownView: View {
-    @ObservedObject var model: CountdownModel
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-            Text("\(model.value)")
-                .font(.system(size: 96, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .contentTransition(.numericText(countsDown: true))
-                .animation(.spring(duration: 0.35), value: model.value)
-        }
-        .frame(width: 180, height: 180)
-    }
-}
-
+/// "Get ready" pill: cancel, or Continue to skip the rest of the countdown.
 @MainActor
 private final class CountdownModel: ObservableObject {
-    @Published var value: Int
-    init(_ v: Int) { value = v }
+    @Published var progress: Double = 0
+    @Published var remaining: Int
+    var skipped = false
+    var cancelled = false
+    init(_ seconds: Int) { remaining = seconds }
+}
+
+private struct CountdownPill: View {
+    @ObservedObject var model: CountdownModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button { model.cancelled = true } label: {
+                Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.black)
+                    .frame(width: 24, height: 24).background(Circle().fill(Color.white.opacity(0.9)))
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Get ready…").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                Text("Recording starts in \(model.remaining)s").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.easeOut(duration: 0.2), value: model.remaining)
+            }
+            Button { model.skipped = true } label: {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle().stroke(Color.white.opacity(0.3), lineWidth: 2.5)
+                        Circle().trim(from: 0, to: model.progress).stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 16, height: 16)
+                    Text("Continue").font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).frame(height: 34)
+                .background(Capsule().fill(Theme.accent))
+            }
+            .buttonStyle(.plain)
+            .help("Start recording now")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 58)
+        .background(Capsule().fill(Color(white: 0.1).opacity(0.96)).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))))
+        .fixedSize()
+    }
 }
 
 @MainActor
 enum Countdown {
-    static func run(seconds: Int, on screen: NSScreen) async {
-        guard seconds > 0 else { return }
+    /// Returns false if the user cancelled.
+    static func run(seconds: Int, on screen: NSScreen) async -> Bool {
+        guard seconds > 0 else { return true }
         let model = CountdownModel(seconds)
-        let size = CGSize(width: 180, height: 180)
-        let frame = CGRect(x: screen.frame.midX - size.width / 2, y: screen.frame.midY - size.height / 2, width: size.width, height: size.height)
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: CountdownPill(model: model))
+        let size = host.fittingSize
+        let panel = FloatingPanel(contentRect: CGRect(x: screen.frame.midX - size.width / 2, y: screen.frame.midY - size.height / 2,
+                                                      width: size.width, height: size.height))
         panel.level = .screenSaver
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.sharingType = .none
-        panel.ignoresMouseEvents = true
-        panel.contentView = NSHostingView(rootView: CountdownView(model: model))
+        panel.contentView = host
         panel.orderFrontRegardless()
-        for v in stride(from: seconds, through: 1, by: -1) {
-            model.value = v
-            NSSound(named: "Tink")?.play()
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        let start = Date()
+        var lastSecond = -1
+        while !model.skipped && !model.cancelled {
+            let elapsed = Date().timeIntervalSince(start)
+            if elapsed >= Double(seconds) { break }
+            model.progress = elapsed / Double(seconds)
+            let left = seconds - Int(elapsed)
+            if left != lastSecond {
+                lastSecond = left
+                model.remaining = left
+                NSSound(named: "Tink")?.play()
+            }
+            try? await Task.sleep(nanoseconds: 33_000_000)
         }
         panel.orderOut(nil)
+        return !model.cancelled
     }
 }
 

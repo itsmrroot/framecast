@@ -36,7 +36,7 @@ struct ExportSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 560)
         .background(Theme.panel)
     }
 
@@ -54,13 +54,13 @@ struct ExportSheet: View {
                 }
                 row("Frame rate") {
                     Picker("", selection: $settings.fps) {
-                        Text("24").tag(24); Text("30").tag(30); Text("60").tag(60)
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 260)
+                        ForEach(ExportSettings.frameRates, id: \.self) { Text("\($0) fps").tag($0) }
+                    }.labelsHidden().frame(width: 140)
                 }
                 row("Compression") {
                     Picker("", selection: $settings.quality) {
                         ForEach(ExportQuality.allCases) { q in Text(q.label).tag(q) }
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 300)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 380)
                 }
                 Text(settings.quality.detail)
                     .font(.system(size: 11)).foregroundStyle(Theme.textDim)

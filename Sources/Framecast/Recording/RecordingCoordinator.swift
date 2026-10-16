@@ -76,7 +76,8 @@ final class RecordingCoordinator: ObservableObject {
 
         WindowManager.shared.hideAllForRecording()
         phase = .countdown
-        await Countdown.run(seconds: settings.countdown, on: targetScreen ?? NSScreen.main!)
+        let go = await Countdown.run(seconds: settings.countdown, on: targetScreen ?? NSScreen.main ?? NSScreen.screens[0])
+        guard go else { cancel(); return }
         guard phase == .countdown, let clock else { return }
 
         clock.begin()

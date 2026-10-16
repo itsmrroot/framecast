@@ -58,9 +58,25 @@ struct FramecastApp: App {
                         Button(kind.label) { WindowManager.shared.activeEditor?.addEffect(kind) }
                     }
                 }
+                Button("Crop Recording…") { WindowManager.shared.activeEditorController?.showCrop() }
+                Button("Loop Playback") { WindowManager.shared.activeEditor?.loopPlayback.toggle() }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                Divider()
+                Button("Command Palette…") { WindowManager.shared.activeEditorController?.showPalette() }
+                    .keyboardShortcut("k", modifiers: [.command])
                 Divider()
                 Button("Export…") { WindowManager.shared.activeEditorController?.showExport() }
                     .keyboardShortcut("e", modifiers: [.command])
+                Button("Quick Export to Clipboard") { WindowManager.shared.activeEditorController?.quickExport(toFile: false) }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
+                Button("Quick Export to File…") { WindowManager.shared.activeEditorController?.quickExport(toFile: true) }
+                    .keyboardShortcut("s", modifiers: [.command, .option])
+            }
+            CommandGroup(after: .toolbar) {
+                ForEach(InspectorTab.allCases) { tab in
+                    Button("\(tab.label) Panel") { WindowManager.shared.activeEditorController?.showPanel(tab) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(tab.number)")), modifiers: [.command])
+                }
             }
         }
     }
@@ -144,7 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch CommandLine.arguments[i + 1] {
             case "toolbar": RecordingToolbar.shared.show()
             case "settings": WindowManager.shared.showSettings()
-            default: break
+            case let v:
+                // Editor views, once an editor opened with --open is up: crop, palette, panel:<name>.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    guard let c = WindowManager.shared.activeEditorController ?? WindowManager.shared.anyEditorController else { return }
+                    if v == "crop" { c.showCrop() }
+                    if v == "palette" { c.showPalette() }
+                    if v.hasPrefix("panel:"), let tab = InspectorTab(rawValue: String(v.dropFirst(6))) { c.showPanel(tab) }
+                }
             }
         }
         if let i = CommandLine.arguments.firstIndex(of: "--open"), CommandLine.arguments.count > i + 1 {
@@ -199,6 +222,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
         }
     }
 
+    var anyEditorController: EditorWindowController? { editors.values.first }
+
+    func editorController(for model: EditorModel) -> EditorWindowController? {
+        editors.values.first { $0.model === model }
+    }
+
     func editor(for folder: URL) -> EditorModel? {
         editors.first { $0.key.standardizedFileURL.path == folder.standardizedFileURL.path }?.value.model
     }
@@ -237,6 +266,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.backgroundColor = Theme.nsBg
             w.contentView = NSHostingView(rootView: SettingsWindowView())
             w.center()
+            w.setFrameAutosaveName("FramecastSettings")
             w.delegate = self
             settingsWindow = w
         }

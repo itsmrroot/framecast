@@ -157,9 +157,17 @@ enum SelfTest {
                                  pixelWidth: Int(size.width), pixelHeight: Int(size.height),
                                  hasWebcam: true, hasMic: false, hasSystemAudio: false, sourceName: "Self test", hasCursorData: true)
         var style = Style()
-        style.background.kind = .wallpaper
         style.keystrokes = .all
         style.camera.background = .blur
+        // Exercise the newer render options.
+        style.crop = CropRect(x: 0.05, y: 0.04, w: 0.9, h: 0.9)
+        style.motionBlur = 1
+        style.shadowStyle = .directional
+        style.inset = true
+        style.cursorStyle = .gradient
+        style.cursorRotation = .tilt
+        style.background.kind = .gradient
+        style.background.customGradient = [RGBA(hex: 0x4776E6), RGBA(hex: 0x8E54E9)]
         let zooms = ZoomGenerator.generate(from: cursor.clicks, duration: duration, scale: 2)
         var title = EffectSegment(kind: .text, start: 0, end: 2.6)
         title.text = "Framecast self-test"
@@ -218,7 +226,7 @@ enum SelfTest {
         gen.requestedTimeToleranceBefore = .zero
         gen.requestedTimeToleranceAfter = .zero
         let editedDuration = job.built.duration.seconds
-        for t in [1.3, 4.6, 7.4, editedDuration - 1.0] {
+        for t in [1.3, 1.0, 4.6, 7.4, editedDuration - 1.0] {
             if let img = try? await gen.image(at: CMTime(sec: t)).image,
                let data = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) {
                 try data.write(to: outDir.appendingPathComponent(String(format: "frame-%.1f.png", t)))

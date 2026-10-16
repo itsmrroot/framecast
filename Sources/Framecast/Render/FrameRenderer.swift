@@ -54,8 +54,15 @@ final class FrameRenderer: @unchecked Sendable {
 
         var out = model.background(size: size, ciContext: ciContext).transformed(by: M)
 
-        // Screen
+        // Screen (cropped to the visible part of the recording first)
         let target = sr.applying(M)
+        var screen = screen
+        if let full = screen, !model.crop.isFull, full.extent.width > 0 {
+            let c = model.crop, e = full.extent
+            let r = CGRect(x: e.minX + c.x * e.width, y: e.minY + (1 - c.y - c.h) * e.height,
+                           width: c.w * e.width, height: c.h * e.height).integral
+            screen = full.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+        }
         if let screen, screen.extent.width > 0 {
             let kx = target.width / screen.extent.width
             let ky = target.height / screen.extent.height
@@ -77,12 +84,31 @@ final class FrameRenderer: @unchecked Sendable {
                 img = img.cropped(to: target)
             }
             out = img.composited(over: out)
+
+            if style.inset {
+                // A thin border inside the screen, like a bezel.
+                let w = max(1, CGFloat(style.insetSize) * L.unit * s)
+                let r = CGFloat(style.cornerRadius) * L.unit * s
+                let c = style.insetColor
+                let ring = roundedRect(target, radius: r,
+                                       color: CIColor(red: c.r, green: c.g, blue: c.b, alpha: CGFloat(style.insetOpacity)))
+                    .applyingFilter("CISourceOutCompositing", parameters: [
+                        kCIInputBackgroundImageKey: roundedRect(target.insetBy(dx: w, dy: w), radius: max(0, r - w)),
+                    ])
+                out = ring.composited(over: out)
+            }
+        }
+
+        // Cinematic motion blur while the camera zooms or pans.
+        if style.motionBlur > 0.01 {
+            out = cameraMotionBlur(out, model: model, t: t, cam: cam, sr: sr, size: size, unit: L.unit, s: s, ox: ox, oy: oy)
         }
 
         // Blur and spotlight areas live on the recording, so they follow the zoom.
         let active = model.activeEffects(at: t)
-        func regionRect(_ r: CGRect) -> CGRect {
-            CGRect(x: sr.minX + r.minX * sr.width, y: sr.maxY - r.maxY * sr.height,
+        func regionRect(_ full: CGRect) -> CGRect {
+            let r = model.crop.toCrop(full) // areas are drawn on the full frame
+            return CGRect(x: sr.minX + r.minX * sr.width, y: sr.maxY - r.maxY * sr.height,
                    width: r.width * sr.width, height: r.height * sr.height).applying(M)
         }
         for (e, a) in active where e.kind == .blur {
@@ -121,9 +147,13 @@ final class FrameRenderer: @unchecked Sendable {
                 let pos = canvasPoint(st.position)
                 let k = pxPerPt * CGFloat(info.width) / max(art.extent.width, 1)
                 var img = art.transformed(by: CGAffineTransform(scaleX: k, y: k))
-                let originX = pos.x - CGFloat(info.hotX) * pxPerPt
-                let originY = pos.y - CGFloat(info.height - info.hotY) * pxPerPt
-                img = img.transformed(by: CGAffineTransform(translationX: originX - img.extent.minX, y: originY - img.extent.minY))
+                // Put the hotspot at the origin, rotate around it, then move it to the cursor position.
+                let hx = CGFloat(info.hotX) * pxPerPt
+                let hy = CGFloat(info.height - info.hotY) * pxPerPt
+                img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX - hx, y: -img.extent.minY - hy))
+                let angle = cursorAngle(style: style, velocity: st.velocity)
+                if abs(angle) > 0.001 { img = img.transformed(by: CGAffineTransform(rotationAngle: angle)) }
+                img = img.transformed(by: CGAffineTransform(translationX: pos.x, y: pos.y))
 
                 if style.cursorMotionBlur {
                     // pixels per frame at 60 fps
@@ -180,6 +210,57 @@ final class FrameRenderer: @unchecked Sendable {
         }
 
         return out.cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    // MARK: Motion
+
+    /// Cursor rotation in radians (Core Image: counter-clockwise is positive).
+    private func cursorAngle(style: Style, velocity v: CGVector) -> CGFloat {
+        var deg = style.cursorAngle
+        switch style.cursorRotation {
+        case .off: break
+        case .tilt:
+            // Lean into fast horizontal movement (right = clockwise), upright at rest.
+            deg -= clamp(Double(v.dx) * 60 * style.cursorTiltAmount, -35, 35)
+        case .follow:
+            // Point the arrow tip along the direction of travel once moving quickly enough.
+            let speed = Double(hypot(v.dx, v.dy))
+            if speed > 0.3 {
+                var turn = atan2(Double(-v.dy), Double(v.dx)) * 180 / .pi - 135 // the tip points up-left at rest
+                while turn > 180 { turn -= 360 }
+                while turn < -180 { turn += 360 }
+                deg += turn * min(1, (speed - 0.3) / 0.7)
+            }
+        }
+        return CGFloat(deg * .pi / 180)
+    }
+
+    /// Blurs the frame along the camera's movement: directional blur for pans, zoom blur for zooms.
+    private func cameraMotionBlur(_ image: CIImage, model: RenderModel, t: Double, cam: CameraPath.State,
+                                  sr: CGRect, size: CGSize, unit: CGFloat, s: CGFloat, ox: CGFloat, oy: CGFloat) -> CIImage {
+        let prev = model.camera.state(at: max(0, t - 1.0 / 60))
+        let amount = CGFloat(model.style.motionBlur)
+        let canvas = CGRect(origin: .zero, size: size)
+        var out = image
+        let dx = CGFloat(cam.focus.x - prev.focus.x) * sr.width * s
+        let dy = -CGFloat(cam.focus.y - prev.focus.y) * sr.height * s
+        // Kept subtle: it should soften movement, not smear text.
+        let pan = min(hypot(dx, dy) * amount * 0.45, 14 * unit)
+        if pan > 0.8 {
+            out = out.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
+                kCIInputRadiusKey: pan, kCIInputAngleKey: atan2(dy, dx),
+            ]).cropped(to: canvas)
+        }
+        let zoomRate = abs(CGFloat(cam.scale - prev.scale)) / max(CGFloat(cam.scale), 1)
+        let zoom = min(zoomRate * amount * 70 * unit, 10 * unit)
+        if zoom > 0.8 {
+            let fx = (sr.minX + cam.focus.x * sr.width - ox) * s
+            let fy = (sr.maxY - cam.focus.y * sr.height - oy) * s
+            out = out.clampedToExtent().applyingFilter("CIZoomBlur", parameters: [
+                kCIInputCenterKey: CIVector(x: fx, y: fy), "inputAmount": zoom,
+            ]).cropped(to: canvas)
+        }
+        return out
     }
 
     // MARK: Effects

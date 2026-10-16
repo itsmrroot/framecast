@@ -3,8 +3,10 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case background, cursor, zoom, camera, audio, captions
+    case background, cursor, zoom, animation, camera, audio, captions
     var id: String { rawValue }
+    /// ⌘1… shortcut number.
+    var number: Int { (InspectorTab.allCases.firstIndex(of: self) ?? 0) + 1 }
     var label: String { self == .background ? "Style" : rawValue.capitalized }
     var icon: String {
         switch self {
@@ -12,6 +14,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .cursor: return "cursorarrow"
         case .zoom: return "plus.magnifyingglass"
         case .camera: return "video"
+        case .animation: return "wand.and.rays"
         case .audio: return "speaker.wave.2"
         case .captions: return "captions.bubble"
         }
@@ -45,6 +48,7 @@ struct InspectorView: View {
                         case .cursor: CursorTab(model: model)
                         case .zoom: ZoomTab(model: model)
                         case .camera: CameraTab(model: model)
+                        case .animation: AnimationTab(model: model)
                         case .audio: AudioTab(model: model)
                         case .captions: CaptionsTab(model: model)
                         }
@@ -98,18 +102,36 @@ private struct BackgroundTab: View {
             case .image: customImage
             }
             if bg.kind == .wallpaper || bg.kind == .image {
-                LabeledSlider(label: "Blur", value: model.styleBinding(\.background.blur, key: "blur"), range: 0...40)
+                LabeledSlider(label: "Blur", value: model.styleBinding(\.background.blur, key: "blur"), range: 0...40, reset: 0)
             }
         }
 
         VStack(alignment: .leading, spacing: 14) {
+            let d = Style()
             SectionHeader(title: "Frame")
             LabeledSlider(label: "Padding", value: model.styleBinding(\.padding, key: "padding"), range: 0...0.25,
-                          format: { "\(Int($0 * 400))%" })
-            LabeledSlider(label: "Rounded corners", value: model.styleBinding(\.cornerRadius, key: "corner"), range: 0...60)
+                          format: { "\(Int($0 * 400))%" }, reset: d.padding)
+            LabeledSlider(label: "Rounded corners", value: model.styleBinding(\.cornerRadius, key: "corner"), range: 0...60, reset: d.cornerRadius)
             LabeledSlider(label: "Shadow", value: model.styleBinding(\.shadow, key: "shadow"), range: 0...1,
-                          format: { "\(Int($0 * 100))%" })
-            LabeledSlider(label: "Shadow softness", value: model.styleBinding(\.shadowBlur, key: "shadowBlur"), range: 4...120)
+                          format: { "\(Int($0 * 100))%" }, reset: d.shadow)
+            PillPicker(options: ShadowStyle.allCases, selection: model.styleBinding(\.shadowStyle, key: "shStyle"), label: \.label)
+            LabeledSlider(label: "Shadow softness", value: model.styleBinding(\.shadowBlur, key: "shadowBlur"), range: 4...120, reset: d.shadowBlur)
+            if model.doc.style.shadowStyle == .directional {
+                LabeledSlider(label: "Shadow distance", value: model.styleBinding(\.shadowDistance, key: "shDist"), range: 0...80,
+                              reset: d.shadowDistance)
+                LabeledSlider(label: "Shadow angle", value: model.styleBinding(\.shadowAngle, key: "shAngle"), range: 0...359,
+                              format: { "\(Int($0))°" }, reset: d.shadowAngle)
+            }
+            ToggleRow(label: "Inset border inside the screen", isOn: model.styleBinding(\.inset, key: "inset"))
+            if model.doc.style.inset {
+                LabeledSlider(label: "Inset size", value: model.styleBinding(\.insetSize, key: "insetSize"), range: 1...30, reset: d.insetSize)
+                LabeledSlider(label: "Inset opacity", value: model.styleBinding(\.insetOpacity, key: "insetOp"), range: 0.05...1,
+                              format: { "\(Int($0 * 100))%" }, reset: d.insetOpacity)
+                ColorPicker("Inset color", selection: Binding(get: { model.doc.style.insetColor.color }, set: { c in
+                    model.edit(.render, coalesce: "insetColor") { $0.style.insetColor = RGBA(c) }
+                }), supportsOpacity: false)
+                .font(.system(size: 12))
+            }
         }
 
         VStack(alignment: .leading, spacing: 10) {
@@ -136,7 +158,19 @@ private struct BackgroundTab: View {
 
     private var wallpapers: some View {
         let current = bg.wallpaperPath ?? Backgrounds.defaultWallpaper()
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+        return VStack(spacing: 8) {
+            Button {
+                if let w = Backgrounds.wallpapers.filter({ $0.path != current }).randomElement() {
+                    model.edit(.render) { $0.style.background.wallpaperPath = w.path }
+                }
+            } label: { Label("Pick random wallpaper", systemImage: "sparkles").frame(maxWidth: .infinity) }
+                .buttonStyle(SecondaryButtonStyle())
+            wallpaperGrid(current: current)
+        }
+    }
+
+    private func wallpaperGrid(current: String?) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(Backgrounds.wallpapers, id: \.path) { url in
                 WallpaperThumb(path: url.path, selected: current == url.path)
                     .onTapGesture {
@@ -148,16 +182,50 @@ private struct BackgroundTab: View {
     }
 
     private var gradients: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let stops = bg.customGradient ?? Backgrounds.gradients[clamp(bg.gradientIndex, 0, Backgrounds.gradients.count - 1)].colors
+            HStack(spacing: 10) {
+                ForEach(0..<2, id: \.self) { i in
+                    ColorPicker("", selection: Binding(get: { (i == 0 ? stops.first : stops.last)?.color ?? .white }, set: { c in
+                        model.edit(.render, coalesce: "grad\(i)") { d in
+                            var s2 = [stops.first ?? RGBA(hex: 0x4776E6), stops.last ?? RGBA(hex: 0x8E54E9)]
+                            s2[i] = RGBA(c)
+                            d.style.background.customGradient = s2
+                        }
+                    }), supportsOpacity: false)
+                    .labelsHidden()
+                }
+                Text(bg.customGradient == nil ? "Preset" : "Custom").font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                Spacer()
+                Button {
+                    model.edit(.render) { d in
+                        let a = Double.random(in: 0...1)
+                        d.style.background.customGradient = [
+                            RGBA(Color(nsColor: NSColor(hue: a, saturation: 0.7, brightness: 0.95, alpha: 1))),
+                            RGBA(Color(nsColor: NSColor(hue: (a + 0.12).truncatingRemainder(dividingBy: 1), saturation: 0.75, brightness: 0.85, alpha: 1))),
+                        ]
+                    }
+                } label: { Image(systemName: "shuffle") }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .help("Random gradient")
+            }
+            LabeledSlider(label: "Hue", value: model.styleBinding(\.background.gradientHue, key: "hue"), range: -180...180,
+                          format: { "\(Int($0))°" }, reset: 0)
+            presetGradients
+        }
+    }
+
+    private var presetGradients: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
             ForEach(Backgrounds.gradients.indices, id: \.self) { i in
                 let g = Backgrounds.gradients[i]
-                let selected = bg.gradientIndex == i
+                let selected = bg.customGradient == nil && bg.gradientIndex == i
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(LinearGradient(colors: g.colors.map(\.color),
                                          startPoint: unitPoint(angle: g.angle + 180), endPoint: unitPoint(angle: g.angle)))
                     .aspectRatio(1, contentMode: .fit)
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 2 : 1))
-                    .onTapGesture { model.edit(.render) { $0.style.background.gradientIndex = i } }
+                    .onTapGesture { model.edit(.render) { $0.style.background.gradientIndex = i; $0.style.background.customGradient = nil } }
                     .help(g.name)
             }
         }
@@ -185,6 +253,20 @@ private struct BackgroundTab: View {
         }
     }
 
+    /// Saves a pasted image into the project so it travels with it.
+    private func pasteImage() {
+        let pb = NSPasteboard.general
+        if let url = (pb.readObjects(forClasses: [NSURL.self]) as? [URL])?.first, NSImage(contentsOf: url) != nil {
+            model.edit(.render) { $0.style.background.imagePath = url.path }
+            return
+        }
+        guard let image = NSImage(pasteboard: pb), let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { NSSound.beep(); return }
+        let url = model.folder.appendingPathComponent("background-\(UUID().uuidString.prefix(8)).png")
+        guard (try? png.write(to: url)) != nil else { NSSound.beep(); return }
+        model.edit(.render) { $0.style.background.imagePath = url.path }
+    }
+
     private var customImage: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let path = bg.imagePath, let thumb = Backgrounds.thumbnail(path: path) {
@@ -200,10 +282,28 @@ private struct BackgroundTab: View {
                     model.edit(.render) { $0.style.background.imagePath = url.path }
                 }
             } label: {
-                Label(bg.imagePath == nil ? "Choose Image…" : "Change Image…", systemImage: "photo")
-                    .frame(maxWidth: .infinity)
+                VStack(spacing: 6) {
+                    Image(systemName: "photo.badge.plus").font(.system(size: 20))
+                    Text(bg.imagePath == nil ? "Click or drop an image" : "Click or drop to change")
+                        .font(.system(size: 11))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .foregroundStyle(Theme.textDim)
+                .background(RoundedRectangle(cornerRadius: 10).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4])).foregroundStyle(Theme.border))
+                .contentShape(Rectangle())
             }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(.plain)
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                _ = providers.first?.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url, NSImage(contentsOf: url) != nil else { return }
+                    DispatchQueue.main.async { model.edit(.render) { $0.style.background.imagePath = url.path } }
+                }
+                return true
+            }
+            Button("Paste Image") { pasteImage() }
+                .buttonStyle(SecondaryButtonStyle())
+                .help("Use the image on the clipboard")
         }
     }
 }
@@ -238,6 +338,7 @@ private struct CursorTab: View {
     @ObservedObject var model: EditorModel
 
     var body: some View {
+        let d = Style()
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Cursor")
             if model.cursorTrack.isEmpty {
@@ -245,13 +346,23 @@ private struct CursorTab: View {
                     .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
             } else {
                 ToggleRow(label: "Show cursor", isOn: model.styleBinding(\.showCursor, key: "showCursor"))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(CursorStyleKind.allCases) { k in
+                            CursorStyleTile(kind: k, selected: model.doc.style.cursorStyle == k) {
+                                model.edit(.render) { $0.style.cursorStyle = k }
+                            }
+                        }
+                    }
+                }
                 LabeledSlider(label: "Size", value: model.styleBinding(\.cursorSize, key: "cursorSize"), range: 0.5...4,
-                              format: { String(format: "%.1f×", $0) })
-                LabeledSlider(label: "Smooth movement", value: model.styleBinding(\.cursorSmoothing, key: "smoothing"), range: 0...1,
-                              format: { $0 < 0.02 ? "Off" : "\(Int($0 * 100))%" })
-                ToggleRow(label: "High-resolution arrow", isOn: model.styleBinding(\.highResCursor, key: "hires"))
+                              format: { String(format: "%.1f×", $0) }, reset: d.cursorSize)
+                ToggleRow(label: "Always use the pointer", isOn: model.styleBinding(\.alwaysPointer, key: "alwaysPtr"))
+                hint("Keeps the arrow over text fields and links instead of the I-beam or hand.")
+                ToggleRow(label: "Hide when not moving", isOn: model.styleBinding(\.hideIdleCursor, key: "idle"))
                 ToggleRow(label: "Motion blur", isOn: model.styleBinding(\.cursorMotionBlur, key: "mblur"))
-                ToggleRow(label: "Hide when idle", isOn: model.styleBinding(\.hideIdleCursor, key: "idle"))
+                ToggleRow(label: "Loop cursor position", isOn: model.styleBinding(\.loopCursor, key: "loopCur"))
+                hint("Glides back to where it started at the end, so looping videos and GIFs join up.")
             }
         }
         if !model.cursorTrack.isEmpty {
@@ -261,6 +372,34 @@ private struct CursorTab: View {
                            selection: model.styleBinding(\.clickEffect, key: "click"), label: \.label)
                 Text("\(model.cursorTrack.clicks.count) clicks recorded")
                     .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "Rotation")
+                LabeledSlider(label: "Rotate cursor", value: model.styleBinding(\.cursorAngle, key: "curAngle"), range: -45...45,
+                              format: { "\(Int($0))°" }, reset: 0)
+                Text("Rotate while moving").font(.system(size: 12))
+                PillPicker(options: CursorRotation.allCases, selection: model.styleBinding(\.cursorRotation, key: "curRot"), label: \.label)
+                switch model.doc.style.cursorRotation {
+                case .off: EmptyView()
+                case .tilt:
+                    LabeledSlider(label: "Tilt amount", value: model.styleBinding(\.cursorTiltAmount, key: "tilt"), range: 0.05...1,
+                                  format: { "\(Int($0 * 100))%" }, reset: d.cursorTiltAmount)
+                    hint("Leans into fast sideways movement and springs back upright.")
+                case .follow:
+                    hint("The arrow turns to point where it's going.")
+                }
+            }
+            DisclosureCard(title: "Advanced") {
+                LabeledSlider(label: "Stop cursor movement at the end", value: model.styleBinding(\.cursorStopAtEnd, key: "stopEnd"),
+                              range: 0...5, format: { $0 < 0.05 ? "Off" : String(format: "%.1fs", $0) }, reset: 0)
+                hint("Freezes the cursor for the last seconds, so reaching for the stop button isn't shown.")
+                ToggleRow(label: "Remove cursor shakes", isOn: model.styleBinding(\.removeCursorShakes, key: "shakes"))
+                if model.doc.style.removeCursorShakes {
+                    LabeledSlider(label: "Shake threshold", value: model.styleBinding(\.cursorShakeThreshold, key: "shakeT"),
+                                  range: 0.05...1, format: { "\(Int($0 * 100))%" }, reset: d.cursorShakeThreshold)
+                }
+                ToggleRow(label: "Optimize cursor changes", isOn: model.styleBinding(\.optimizeCursorChanges, key: "optCur"))
+                hint("Ignores cursor shapes shown for a split second, so the cursor doesn't flicker over buttons.")
             }
         }
         VStack(alignment: .leading, spacing: 10) {
@@ -272,11 +411,54 @@ private struct CursorTab: View {
             } else {
                 PillPicker(options: KeystrokeMode.allCases, selection: model.styleBinding(\.keystrokes, key: "keys"), label: \.label)
                 LabeledSlider(label: "Size", value: model.styleBinding(\.keystrokeSize, key: "keySize"), range: 0.6...2,
-                              format: { String(format: "%.1f×", $0) })
+                              format: { String(format: "%.1f×", $0) }, reset: 1)
                 Text("\(model.keys.filter(\.isShortcut).count) shortcuts · \(model.keys.count) key presses recorded")
                     .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
             }
         }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A preview tile for a cursor style, drawn from the same art the renderer uses.
+private struct CursorStyleTile: View {
+    let kind: CursorStyleKind
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(0.05))
+                    if let img = CursorStyleTile.preview(kind) {
+                        Image(nsImage: img).resizable().interpolation(.high).scaledToFit().padding(12)
+                    } else {
+                        Image(systemName: "cursorarrow").font(.system(size: 22))
+                    }
+                }
+                .frame(width: 58, height: 58)
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 2 : 1))
+                Text(kind.label).font(.system(size: 10)).foregroundStyle(selected ? Theme.text : Theme.textDim).lineLimit(1)
+            }
+            .frame(width: 64)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private static var cache: [CursorStyleKind: NSImage] = [:]
+
+    static func preview(_ kind: CursorStyleKind) -> NSImage? {
+        if let hit = cache[kind] { return hit }
+        guard kind != .system else { return nil }
+        let ci = CursorArt.art(kind).0
+        guard let cg = FrameRenderer.shared.ciContext.createCGImage(ci, from: ci.extent) else { return nil }
+        let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        cache[kind] = img
+        return img
     }
 }
 
@@ -289,10 +471,9 @@ private struct ZoomTab: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Zoom")
             LabeledSlider(label: "Default zoom level", value: model.styleBinding(\.defaultZoomScale, key: "defZoom"), range: 1.2...4,
-                          format: { String(format: "%.1f×", $0) })
-            LabeledSlider(label: "Transition duration", value: model.styleBinding(\.zoomTransition, key: "zoomT"), range: 0.3...1.6,
-                          format: { String(format: "%.1fs", $0) })
-            Text("\(model.doc.zooms.count) zoom\(model.doc.zooms.count == 1 ? "" : "s") on the timeline. Click one to edit it, or click an empty spot in the zoom lane to add one.")
+                          format: { String(format: "%.1f×", $0) }, reset: 2)
+            ToggleRow(label: "Disable all zooms", isOn: model.styleBinding(\.zoomsDisabled, key: "zoomsOff"))
+            Text("\(model.doc.zooms.count) zoom\(model.doc.zooms.count == 1 ? "" : "s") on the timeline\(model.doc.style.zoomsDisabled ? ", kept but not shown" : ""). Click one to edit it, or click an empty spot in the zoom lane to add one.")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -312,6 +493,62 @@ private struct ZoomTab: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .disabled(model.doc.zooms.isEmpty)
+        }
+    }
+}
+
+// MARK: - Animation
+
+private struct AnimationTab: View {
+    @ObservedObject var model: EditorModel
+
+    private static let cursorPresets: [(String, String, Double)] = [
+        ("Smooth", "water.waves", 0.8), ("Medium", "wave.3.right", 0.55), ("Rapid", "bolt", 0.3), ("None", "nosign", 0),
+    ]
+
+    var body: some View {
+        let d = Style()
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Screen animation")
+            ChoiceTiles(options: ScreenAnimation.allCases, selection: model.styleBinding(\.screenAnimation, key: "screenAnim"),
+                        label: \.label, icon: \.icon, detail: \.detail)
+            LabeledSlider(label: "Zoom transition", value: model.styleBinding(\.zoomTransition, key: "zoomT"), range: 0.3...1.6,
+                          format: { String(format: "%.1fs", $0) }, reset: d.zoomTransition)
+            ToggleRow(label: "Start zooms early", isOn: model.styleBinding(\.startZoomEarly, key: "early"))
+            Text("Zoom in before each zoom starts, so it's fully zoomed right on time.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+        }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Motion blur")
+            LabeledSlider(label: "Screen motion blur", value: model.styleBinding(\.motionBlur, key: "mblurScreen"), range: 0...1,
+                          format: { $0 < 0.01 ? "Off" : "\(Int($0 * 100))%" }, reset: d.motionBlur)
+            Text("Moving elements get a cinematic blur while the camera zooms and pans.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+        }
+        if !model.cursorTrack.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Cursor animation")
+                let current = model.doc.style.cursorSmoothing
+                HStack(spacing: 6) {
+                    ForEach(AnimationTab.cursorPresets, id: \.0) { name, icon, value in
+                        let on = abs(current - value) < 0.02
+                        Button { model.edit(.render) { $0.style.cursorSmoothing = value } } label: {
+                            VStack(spacing: 5) {
+                                Image(systemName: icon).font(.system(size: 15))
+                                Text(name).font(.system(size: 10.5, weight: .medium))
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(on ? 0.1 : 0.04)))
+                            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(on ? Theme.accent : Theme.border, lineWidth: on ? 1.5 : 1))
+                            .foregroundStyle(on ? Theme.text : Theme.textDim)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                LabeledSlider(label: "Fine-tune smoothing", value: model.styleBinding(\.cursorSmoothing, key: "smoothing"), range: 0...1,
+                              format: { $0 < 0.02 ? "Off" : "\(Int($0 * 100))%" }, reset: d.cursorSmoothing)
+            }
         }
     }
 }
@@ -340,6 +577,11 @@ private struct ZoomDetail: View {
                                 .font(.system(size: 11)).foregroundStyle(Theme.textDim)
                         }
                     }
+                    ToggleRow(label: "Instant animation", isOn: Binding(get: { zoom.instant }, set: { v in
+                        model.updateZoom(zoom.id) { $0.instant = v }
+                    }))
+                    Text("Cuts straight in and out instead of easing.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textDim)
                     HStack {
                         Text("Starts \(formatTime(zoom.start, fraction: true))")
                         Spacer()
@@ -409,7 +651,7 @@ private struct FocusPicker: View {
 private struct ClipDetail: View {
     @ObservedObject var model: EditorModel
     let clip: Clip
-    private let speeds: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 8]
+    private let speeds: [Double] = [0.5, 0.75, 1, 1.2, 1.4, 1.6, 1.8, 2, 3, 4, 8, 16, 24]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -436,6 +678,11 @@ private struct ClipDetail: View {
                         }
                         Text("Speed up typing or waiting, or slow down important moments.")
                             .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                        Button { model.applySpeedToAll(clip.speed) } label: {
+                            Label("Apply \(clip.speed, specifier: "%g")× to all clips", systemImage: "rectangle.stack").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.doc.clips.count < 2 || model.doc.clips.allSatisfy { abs($0.speed - clip.speed) < 0.001 })
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         row("Source", "\(formatTime(clip.start, fraction: true)) – \(formatTime(clip.end, fraction: true))")
@@ -641,6 +888,7 @@ private struct EffectDetail: View {
                         note("The camera fades out for this part of the video.")
                     }
 
+                    ToggleRow(label: "Disable", isOn: binding(\.disabled, key: "disabled"))
                     HStack {
                         Text("Starts \(formatTime(effect.start, fraction: true))")
                         Spacer()

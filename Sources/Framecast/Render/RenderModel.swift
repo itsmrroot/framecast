@@ -26,6 +26,8 @@ final class RenderModel: @unchecked Sendable {
     let aspect: CGFloat
     let screenTrackID: CMPersistentTrackID
     let webcamTrackID: CMPersistentTrackID?
+    /// Visible part of the recording; everything else in the model is relative to it.
+    let crop: CropRect
     let effects: [EffectSegment]
     let captions: [CaptionCue]
     /// Keystroke badges to show: each label is visible from `start` until `end`.
@@ -39,18 +41,27 @@ final class RenderModel: @unchecked Sendable {
          screenTrackID: CMPersistentTrackID, webcamTrackID: CMPersistentTrackID?,
          effects: [EffectSegment] = [], captions: [CaptionCue] = [], keys: [KeyEvent] = []) {
         self.style = style
-        sourceSize = CGSize(width: info.pixelWidth, height: info.pixelHeight)
-        pointSize = CGSize(width: info.pointWidth, height: info.pointHeight)
+        let crop = (style.crop?.isFull ?? true) ? CropRect.full : style.crop!
+        self.crop = crop
+        sourceSize = CGSize(width: Double(info.pixelWidth) * crop.w, height: Double(info.pixelHeight) * crop.h)
+        pointSize = CGSize(width: info.pointWidth * crop.w, height: info.pointHeight * crop.h)
         self.editMap = editMap
         self.cursor = cursorPath
-        clicks = cursorTrack.clicks.sorted { $0.t < $1.t }
-        shapes = cursorTrack.shapes.sorted { $0.t < $1.t }
+        clicks = cursorTrack.cropped(crop).clicks.sorted { $0.t < $1.t }
+        var shapes = cursorTrack.shapes.sorted { $0.t < $1.t }
+        if style.optimizeCursorChanges && shapes.count > 2 {
+            // A shape shown for less than ~0.12 s is flicker (passing over a link or text field).
+            shapes = shapes.enumerated().filter { i, s in
+                i == 0 || i == shapes.count - 1 || shapes[i + 1].t - s.t >= 0.12
+            }.map(\.element)
+        }
+        self.shapes = shapes
         shapeInfo = cursorTrack.shapeInfo
         self.cursorImages = cursorImages
         self.screenTrackID = screenTrackID
         self.webcamTrackID = webcamTrackID
         aspect = style.aspect.value(source: sourceSize, padding: style.padding)
-        self.effects = effects.sorted { $0.start < $1.start }
+        self.effects = effects.filter { !$0.disabled }.sorted { $0.start < $1.start }
         self.captions = style.showCaptions ? captions.sorted { $0.start < $1.start } : []
         keyItems = RenderModel.buildKeyItems(keys, mode: style.keystrokes)
 
@@ -58,8 +69,17 @@ final class RenderModel: @unchecked Sendable {
         let ref = CGSize(width: 1000 * aspect, height: 1000)
         let sr = RenderModel.layout(style: style, sourceSize: sourceSize, size: ref).screenRect
         let half = CGSize(width: ref.width / 2 / max(sr.width, 1), height: ref.height / 2 / max(sr.height, 1))
-        camera = CameraPath(zooms: zooms, cursor: cursorPath, duration: info.duration + 1,
-                            transition: style.zoomTransition, viewHalfExtent: half)
+        // Fixed zoom focus points are picked on the full frame.
+        let viewZooms = style.zoomsDisabled ? [] : zooms.map { z -> ZoomSegment in
+            var z = z
+            let p = crop.toCrop(CGPoint(x: z.focusX, y: z.focusY))
+            z.focusX = clamp(Double(p.x), 0, 1)
+            z.focusY = clamp(Double(p.y), 0, 1)
+            return z
+        }
+        camera = CameraPath(zooms: viewZooms, cursor: cursorPath, duration: info.duration + 1,
+                            transition: style.zoomTransition, viewHalfExtent: half,
+                            animation: style.screenAnimation, startEarly: style.startZoomEarly)
     }
 
     static func layout(style: Style, sourceSize: CGSize, size: CGSize) -> FrameLayout {
@@ -111,8 +131,16 @@ final class RenderModel: @unchecked Sendable {
             if style.shadow > 0.01 {
                 let r = CGFloat(style.cornerRadius) * L.unit
                 let blur = CGFloat(style.shadowBlur) * L.unit
-                ctx.setShadow(offset: CGSize(width: 0, height: -blur * 0.35), blur: blur,
-                              color: CGColor(gray: 0, alpha: CGFloat(min(1, style.shadow))))
+                let offset: CGSize
+                if style.shadowStyle == .directional {
+                    // Angle 0 = right, 90 = down (Core Graphics y points up).
+                    let a = style.shadowAngle * .pi / 180
+                    let d = CGFloat(style.shadowDistance) * L.unit
+                    offset = CGSize(width: cos(a) * d, height: -sin(a) * d)
+                } else {
+                    offset = CGSize(width: 0, height: -blur * 0.35)
+                }
+                ctx.setShadow(offset: offset, blur: blur, color: CGColor(gray: 0, alpha: CGFloat(min(1, style.shadow))))
                 ctx.setFillColor(CGColor(gray: 0, alpha: 1))
                 ctx.addPath(CGPath(roundedRect: L.screenRect.insetBy(dx: 1, dy: 1),
                                    cornerWidth: min(r, L.screenRect.width / 2), cornerHeight: min(r, L.screenRect.height / 2), transform: nil))
@@ -133,11 +161,13 @@ final class RenderModel: @unchecked Sendable {
             if shapes[mid].t <= t { current = shapes[mid]; lo = mid + 1 } else { hi = mid - 1 }
         }
         if current == nil { current = shapes.first }
+        let vector = CursorArt.art(style.cursorStyle == .system ? .outline : style.cursorStyle)
+        if style.alwaysPointer { return vector }
         if let c = current, let info = shapeInfo[c.id] {
-            if style.highResCursor && info.isArrow { return (CursorArt.arrowImage, CursorArt.arrowInfo) }
+            if style.cursorStyle != .system && info.isArrow { return vector }
             if let img = cursorImages[c.id] { return (img, info) }
         }
-        return (CursorArt.arrowImage, CursorArt.arrowInfo)
+        return vector
     }
 
     // MARK: Effects, captions, keystrokes
@@ -232,8 +262,107 @@ final class RenderModel: @unchecked Sendable {
     }
 }
 
-/// High-resolution vector macOS-style arrow cursor.
+extension CursorTrack {
+    /// The track with positions relative to a crop of the recording.
+    func cropped(_ crop: CropRect) -> CursorTrack {
+        guard !crop.isFull else { return self }
+        var t = self
+        t.samples = samples.map { s in
+            let p = crop.toCrop(CGPoint(x: s.x, y: s.y))
+            return CursorSample(t: s.t, x: Double(p.x), y: Double(p.y))
+        }
+        t.clicks = clicks.map { c in
+            let p = crop.toCrop(CGPoint(x: c.x, y: c.y))
+            return ClickEvent(t: c.t, x: Double(p.x), y: Double(p.y), button: c.button)
+        }
+        return t
+    }
+}
+
+/// High-resolution vector cursors drawn by the renderer.
 enum CursorArt {
+    private static let lock = NSLock()
+    private static var styled: [CursorStyleKind: (CIImage, CursorShapeInfo)] = [:]
+
+    /// The cursor image and geometry for a style (cached).
+    static func art(_ style: CursorStyleKind) -> (CIImage, CursorShapeInfo) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let hit = styled[style] { return hit }
+        let made: (CIImage, CursorShapeInfo)
+        switch style {
+        case .outline, .system: made = (arrowImage, arrowInfo)
+        case .dot:
+            let info = CursorShapeInfo(id: "vector-dot", hotX: 12, hotY: 12, width: 24, height: 24, isArrow: true)
+            made = (draw(info) { ctx in
+                ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 3, color: CGColor(gray: 0, alpha: 0.35))
+                ctx.setFillColor(CGColor(gray: 0.15, alpha: 0.55))
+                ctx.fillEllipse(in: CGRect(x: 3, y: 3, width: 18, height: 18))
+                ctx.setShadow(offset: .zero, blur: 0, color: nil)
+                ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.95))
+                ctx.setLineWidth(2)
+                ctx.strokeEllipse(in: CGRect(x: 3, y: 3, width: 18, height: 18))
+            }, info)
+        case .thin, .contrast, .gradient:
+            let info = arrowInfo
+            made = (draw(info) { ctx in
+                let path = arrowPath()
+                ctx.setLineJoin(.round)
+                ctx.saveGState()
+                ctx.setShadow(offset: CGSize(width: 0, height: 1.2), blur: 2.6, color: CGColor(gray: 0, alpha: 0.4))
+                ctx.addPath(path)
+                switch style {
+                case .thin:
+                    ctx.setStrokeColor(CGColor(gray: 1, alpha: 1)); ctx.setLineWidth(1.6); ctx.strokePath()
+                case .contrast:
+                    ctx.setStrokeColor(CGColor(gray: 0, alpha: 1)); ctx.setLineWidth(4.2); ctx.strokePath()
+                default:
+                    ctx.setStrokeColor(CGColor(gray: 0.08, alpha: 1)); ctx.setLineWidth(2.6); ctx.strokePath()
+                }
+                ctx.restoreGState()
+                ctx.addPath(path)
+                ctx.clip()
+                switch style {
+                case .thin: ctx.setFillColor(CGColor(gray: 0.05, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+                case .contrast: ctx.setFillColor(CGColor(gray: 1, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+                default:
+                    let g = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [
+                        CGColor(srgbRed: 1, green: 0.62, blue: 0.2, alpha: 1), CGColor(srgbRed: 0.95, green: 0.25, blue: 0.5, alpha: 1),
+                    ] as CFArray, locations: [0, 1])!
+                    ctx.drawLinearGradient(g, start: CGPoint(x: 4, y: 3), end: CGPoint(x: 16, y: 26), options: [])
+                }
+            }, info)
+        }
+        styled[style] = made
+        return made
+    }
+
+    private static func arrowPath() -> CGPath {
+        let pts: [CGPoint] = [
+            CGPoint(x: 4, y: 3), CGPoint(x: 4, y: 23.6), CGPoint(x: 8.9, y: 18.9),
+            CGPoint(x: 12.1, y: 26.5), CGPoint(x: 15.7, y: 25.0), CGPoint(x: 12.6, y: 17.6),
+            CGPoint(x: 19.3, y: 17.6),
+        ]
+        let path = CGMutablePath()
+        path.addLines(between: pts)
+        path.closeSubpath()
+        return path
+    }
+
+    /// Draws at 8× in point space with a top-left origin.
+    private static func draw(_ info: CursorShapeInfo, _ body: (CGContext) -> Void) -> CIImage {
+        let scale: CGFloat = 8
+        let w = Int(info.width * scale), h = Int(info.height * scale)
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return .empty() }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        body(ctx)
+        guard let img = ctx.makeImage() else { return .empty() }
+        return CIImage(cgImage: img)
+    }
+
     static let arrowInfo = CursorShapeInfo(id: "vector-arrow", hotX: 4, hotY: 3, width: 24, height: 32, isArrow: true)
 
     static let arrowImage: CIImage = {

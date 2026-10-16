@@ -35,10 +35,9 @@ struct SectionHeader: View {
     var trailing: AnyView? = nil
     var body: some View {
         HStack {
-            Text(title.uppercased())
-                .font(.system(size: 10.5, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.textDim)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
             Spacer()
             if let trailing { trailing }
         }
@@ -51,6 +50,8 @@ struct LabeledSlider: View {
     let range: ClosedRange<Double>
     var step: Double? = nil
     var format: (Double) -> String = { String(format: "%.0f", $0) }
+    /// When set, shows a Reset button that returns the slider to this value.
+    var reset: Double? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -60,6 +61,15 @@ struct LabeledSlider: View {
                 Text(format(value))
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.textDim)
+                if let reset {
+                    let atDefault = abs(value - reset) < 0.0001
+                    Button("Reset") { value = reset }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(atDefault ? Theme.textFaint : Theme.accent)
+                        .disabled(atDefault)
+                        .help("Back to the default")
+                }
             }
             if let step {
                 Slider(value: $value, in: range, step: step).controlSize(.small)
@@ -124,6 +134,63 @@ struct PillPicker<T: Hashable>: View {
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.fill.opacity(0.07)))
+    }
+}
+
+/// A large icon-over-label choice tile (animation styles, zoom styles…).
+struct ChoiceTiles<T: Hashable>: View {
+    let options: [T]
+    @Binding var selection: T
+    let label: (T) -> String
+    let icon: (T) -> String
+    var detail: ((T) -> String)? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(options, id: \.self) { o in
+                let on = selection == o
+                Button { selection = o } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: icon(o)).font(.system(size: 18))
+                        Text(label(o)).font(.system(size: 11.5, weight: .medium))
+                        if let detail { Text(detail(o)).font(.system(size: 10)).foregroundStyle(Theme.textDim).lineLimit(1) }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.fill.opacity(on ? 0.1 : 0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(on ? Theme.accent : Theme.border, lineWidth: on ? 1.5 : 1))
+                    .foregroundStyle(on ? Theme.text : Theme.textDim)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// A collapsible "Advanced" card for options most people won't need.
+struct DisclosureCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
+                HStack {
+                    Text(title).font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill.opacity(0.08)))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open { content }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.fill.opacity(0.04)))
     }
 }
 

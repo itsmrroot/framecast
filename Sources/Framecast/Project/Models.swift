@@ -80,7 +80,28 @@ struct ZoomSegment: Codable, Identifiable, Equatable {
     var focusX: Double = 0.5
     var focusY: Double = 0.5
     var isAuto = false
+    /// Cut straight in and out, without easing.
+    var instant = false
     var duration: Double { end - start }
+
+    init(id: UUID = UUID(), start: Double, end: Double, scale: Double = 2, mode: ZoomMode = .followCursor,
+         focusX: Double = 0.5, focusY: Double = 0.5, isAuto: Bool = false, instant: Bool = false) {
+        self.id = id; self.start = start; self.end = end; self.scale = scale; self.mode = mode
+        self.focusX = focusX; self.focusY = focusY; self.isAuto = isAuto; self.instant = instant
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 2
+        mode = (try? c.decodeIfPresent(ZoomMode.self, forKey: .mode)) ?? .followCursor
+        focusX = try c.decodeIfPresent(Double.self, forKey: .focusX) ?? 0.5
+        focusY = try c.decodeIfPresent(Double.self, forKey: .focusY) ?? 0.5
+        isAuto = try c.decodeIfPresent(Bool.self, forKey: .isAuto) ?? false
+        instant = try c.decodeIfPresent(Bool.self, forKey: .instant) ?? false
+    }
 }
 
 enum EffectKind: String, Codable, CaseIterable, Identifiable {
@@ -134,6 +155,8 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     var text = "Add your title"
     var placement: TextPlacement = .center
     var textSize: Double = 1
+    /// Kept on the timeline but not rendered.
+    var disabled = false
     var duration: Double { end - start }
     var region: CGRect { CGRect(x: x, y: y, width: w, height: h) }
 
@@ -160,6 +183,7 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? d.text
         placement = try c.decodeIfPresent(TextPlacement.self, forKey: .placement) ?? d.placement
         textSize = try c.decodeIfPresent(Double.self, forKey: .textSize) ?? d.textSize
+        disabled = try c.decodeIfPresent(Bool.self, forKey: .disabled) ?? false
     }
 }
 
@@ -201,6 +225,10 @@ enum BackgroundKind: String, Codable, CaseIterable, Identifiable {
 struct BackgroundStyle: Codable, Equatable {
     var kind: BackgroundKind = .wallpaper
     var gradientIndex: Int = 0
+    /// Two-stop custom gradient; used instead of the preset when set.
+    var customGradient: [RGBA]? = nil
+    /// Rotates the gradient's colors, in degrees.
+    var gradientHue: Double = 0
     var solid = RGBA(hex: 0x1E1E24)
     var wallpaperPath: String? = nil
     var imagePath: String? = nil
@@ -256,6 +284,59 @@ enum AspectRatio: String, Codable, CaseIterable, Identifiable {
         case .portrait: return 3.0 / 4.0
         }
     }
+}
+
+/// Normalised (top-left) part of the recording that stays visible.
+struct CropRect: Codable, Equatable {
+    var x: Double, y: Double, w: Double, h: Double
+    static let full = CropRect(x: 0, y: 0, w: 1, h: 1)
+    var isFull: Bool { x <= 0.0005 && y <= 0.0005 && w >= 0.999 && h >= 0.999 }
+    var rect: CGRect { CGRect(x: x, y: y, width: w, height: h) }
+
+    /// Full-frame normalised point → cropped normalised point.
+    func toCrop(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: (p.x - x) / max(w, 0.0001), y: (p.y - y) / max(h, 0.0001))
+    }
+    func toCrop(_ r: CGRect) -> CGRect {
+        let o = toCrop(r.origin)
+        return CGRect(x: o.x, y: o.y, width: r.width / max(w, 0.0001), height: r.height / max(h, 0.0001))
+    }
+}
+
+/// How the camera moves into and around zooms.
+enum ScreenAnimation: String, Codable, CaseIterable, Identifiable {
+    case focused, smooth
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var icon: String { self == .focused ? "scope" : "point.topleft.down.to.point.bottomright.curvepath" }
+    var detail: String { self == .focused ? "Snappy and direct" : "Slower, floatier camera" }
+}
+
+enum CursorStyleKind: String, Codable, CaseIterable, Identifiable {
+    case outline, system, thin, contrast, gradient, dot
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .outline: return "Classic"
+        case .system: return "As recorded"
+        case .thin: return "Thin"
+        case .contrast: return "High contrast"
+        case .gradient: return "Warm"
+        case .dot: return "Touch"
+        }
+    }
+}
+
+enum CursorRotation: String, Codable, CaseIterable, Identifiable {
+    case off, tilt, follow
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+}
+
+enum ShadowStyle: String, Codable, CaseIterable, Identifiable {
+    case classic, directional
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
 }
 
 enum ClickEffect: String, Codable, CaseIterable, Identifiable {
@@ -317,6 +398,17 @@ struct Style: Codable, Equatable {
     var cornerRadius: Double = 16
     var shadow: Double = 0.55
     var shadowBlur: Double = 40
+    var shadowStyle: ShadowStyle = .classic
+    /// Directional shadow offset, in 1080p pixels, and its angle in degrees (0 = right, 90 = down).
+    var shadowDistance: Double = 24
+    var shadowAngle: Double = 90
+    /// A thin border drawn inside the screen, like a bezel.
+    var inset = false
+    var insetSize: Double = 6
+    var insetColor = RGBA(hex: 0x888888)
+    var insetOpacity: Double = 0.35
+    /// The visible part of the recording (nil = everything).
+    var crop: CropRect? = nil
 
     var showCursor = true
     var cursorSize: Double = 1.6
@@ -325,9 +417,31 @@ struct Style: Codable, Equatable {
     var hideIdleCursor = false
     var cursorMotionBlur = true
     var clickEffect: ClickEffect = .ripple
+    var cursorStyle: CursorStyleKind = .outline
+    /// Keep the arrow even over text fields and links.
+    var alwaysPointer = false
+    /// Freeze the cursor for the last N seconds of the video.
+    var cursorStopAtEnd: Double = 0
+    var removeCursorShakes = true
+    var cursorShakeThreshold: Double = 0.25
+    /// Ignore cursor-shape changes shorter than ~0.12 s (no flicker over UI elements).
+    var optimizeCursorChanges = true
+    /// Ease the cursor back to where it started at the end, so loops join up.
+    var loopCursor = false
+    /// Fixed cursor tilt in degrees.
+    var cursorAngle: Double = 0
+    var cursorRotation: CursorRotation = .off
+    var cursorTiltAmount: Double = 0.3
 
     var zoomTransition: Double = 0.9
     var defaultZoomScale: Double = 2.0
+    var screenAnimation: ScreenAnimation = .smooth
+    /// Cinematic blur on the whole screen while zooming and panning (0 = off).
+    var motionBlur: Double = 0.6
+    /// Begin zooming in before each zoom starts, so it's fully zoomed on time.
+    var startZoomEarly = false
+    /// Keep zooms on the timeline but don't render them.
+    var zoomsDisabled = false
 
     var camera = CameraStyle()
 

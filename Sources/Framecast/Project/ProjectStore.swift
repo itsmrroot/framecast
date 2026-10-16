@@ -98,6 +98,20 @@ final class ProjectLibrary: ObservableObject {
         reload()
     }
 
+    /// A free file name in the Exports folder.
+    func uniqueExportURL(name: String, ext: String) -> URL {
+        let dir = exportsFolder
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let base = name.replacingOccurrences(of: "/", with: "-")
+        var url = dir.appendingPathComponent("\(base).\(ext)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = dir.appendingPathComponent("\(base) \(n).\(ext)")
+            n += 1
+        }
+        return url
+    }
+
     func changeFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true

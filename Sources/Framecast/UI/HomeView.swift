@@ -100,6 +100,7 @@ private struct RecordPanel: View {
                                 Text("Off").tag(0)
                                 Text("3s").tag(3)
                                 Text("5s").tag(5)
+                                Text("10s").tag(10)
                             }
                             .labelsHidden().pickerStyle(.segmented).frame(width: 130)
                         }
@@ -282,7 +283,7 @@ private struct RecordPanel: View {
         home?.orderOut(nil)
         Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
-            if let rect = await AreaSelector.select(on: screen) {
+            if let rect = await AreaSelector.select(on: screen, initial: settings.areaRect, confirmTitle: "Use This Area") {
                 settings.areaRect = rect
             }
             home?.makeKeyAndOrderFront(nil)

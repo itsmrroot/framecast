@@ -110,7 +110,11 @@ enum Backgrounds {
         var imagePath: String?
         switch bg.kind {
         case .gradient:
-            drawGradient(gradients[clamp(bg.gradientIndex, 0, gradients.count - 1)], in: ctx, rect: rect)
+            if let stops = bg.customGradient, stops.count >= 2 {
+                drawGradient(GradientPreset(name: "Custom", colors: stops, angle: 315), in: ctx, rect: rect)
+            } else {
+                drawGradient(gradients[clamp(bg.gradientIndex, 0, gradients.count - 1)], in: ctx, rect: rect)
+            }
         case .solid:
             ctx.setFillColor(bg.solid.cgColor)
             ctx.fill(rect)
@@ -136,6 +140,14 @@ enum Backgrounds {
                 drawGradient(gradients[0], in: ctx, rect: rect)
             }
         }
-        return ctx.makeImage()
+        guard let out = ctx.makeImage() else { return nil }
+        // The Hue slider rotates the gradient's colors.
+        if bg.kind == .gradient, abs(bg.gradientHue) > 0.5 {
+            let ci = CIImage(cgImage: out).applyingFilter("CIHueAdjust", parameters: [
+                kCIInputAngleKey: bg.gradientHue * .pi / 180,
+            ])
+            return ciContext.createCGImage(ci, from: ci.extent) ?? out
+        }
+        return out
     }
 }
