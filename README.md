@@ -35,16 +35,16 @@ a crisp animated cursor, a stylish background and an optional webcam bubble.
 
 ## 📥 Install
 
-1. Download the zip for your Mac from the [**latest release**](https://github.com/itsmrroot/framecast/releases/latest):
+1. Download the installer for your Mac from the [**latest release**](https://github.com/itsmrroot/framecast/releases/latest):
 
    | Your Mac | File |
    | --- | --- |
-   | Apple Silicon (M1 and later) | `Framecast-x.y.z-macOS-arm64.zip` |
-   | Intel | `Framecast-x.y.z-macOS-x86_64.zip` |
+   | Apple Silicon (M1 and later) | `Framecast-x.y.z-Apple-Silicon.dmg` |
+   | Intel | `Framecast-x.y.z-Intel.dmg` |
 
    Not sure which you have? Open  → **About This Mac** and look at **Chip** or **Processor**.
 
-2. Unzip it and move **Framecast.app** into **Applications**.
+2. Open the DMG and drag **Framecast** into **Applications**.
 3. Releases are not notarized yet, so macOS will block the first launch. Right-click the app and choose **Open**, or run:
 
    ```bash
@@ -53,7 +53,7 @@ a crisp animated cursor, a stylish background and an optional webcam bubble.
 
 4. Allow **Screen & System Audio Recording** when asked, then quit and reopen Framecast. Camera and Microphone access are only requested if you turn them on.
 
-Recordings are saved to `~/Movies/Framecast`.
+Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it checks for new versions on launch, and **Framecast → Check for Updates…** checks right away.
 
 ## 🚀 Features
 
@@ -135,6 +135,7 @@ open build/Framecast.app
 | Debug build | `scripts/build-app.sh debug` |
 | Build for a specific chip | `ARCH=x86_64 scripts/build-app.sh` |
 | Sign with a specific identity | `CODESIGN_IDENTITY="Apple Development: …" scripts/build-app.sh` |
+| DMG installer (after building) | `pip install dmgbuild && scripts/make-dmg.sh Framecast.dmg` |
 
 The script signs with your Apple Development identity when one is installed, so macOS keeps your privacy permissions between rebuilds.
 
@@ -143,7 +144,7 @@ The script signs with your Apple Development identity when one is installed, so 
 
 ### Releasing
 
-Push a version tag. GitHub Actions builds the app for Apple Silicon and Intel and publishes both zips to a new release:
+Push a version tag. GitHub Actions builds the app for Apple Silicon and Intel and publishes a DMG installer for each (plus the zips the in-app updater uses) to a new release:
 
 ```bash
 git tag v1.0.0 && git push origin v1.0.0

@@ -1,7 +1,8 @@
 name: Release
 
-# Push a tag like v1.0.0 to build Framecast for Apple Silicon and Intel and publish a GitHub release.
-# Run it manually from the Actions tab to build both zips without publishing a release.
+# Push a tag like v1.0.0 to build Framecast for Apple Silicon and Intel and publish a GitHub release
+# with a drag-to-Applications DMG for each, plus the zips the in-app updater installs.
+# Run it manually from the Actions tab to build everything without publishing a release.
 on:
   push:
     tags: ["v*"]
@@ -19,8 +20,10 @@ jobs:
         include:
           - arch: arm64
             runner: macos-15
+            label: Apple-Silicon
           - arch: x86_64
             runner: macos-15-intel
+            label: Intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -73,16 +76,21 @@ jobs:
           lipo -archs build/Framecast.app/Contents/MacOS/Framecast
           codesign -dr - build/Framecast.app
 
-      - name: Package
+      - name: Build installer (DMG)
         run: |
-          ZIP="Framecast-${VERSION}-macOS-${{ matrix.arch }}.zip"
-          ditto -c -k --keepParent build/Framecast.app "$ZIP"
-          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet dmgbuild
+          mkdir -p dist
+          PATH="$RUNNER_TEMP/venv/bin:$PATH" scripts/make-dmg.sh "dist/Framecast-${VERSION}-${{ matrix.label }}.dmg"
+
+      # The in-app updater (since 1.0.0) installs the zip whose name ends in -macOS-<arch>.zip.
+      - name: Build update package
+        run: ditto -c -k --keepParent build/Framecast.app "dist/Framecast-${VERSION}-update-macOS-${{ matrix.arch }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Framecast-${{ matrix.arch }}
-          path: ${{ env.ZIP }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -100,20 +108,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip \
             --repo "$GITHUB_REPOSITORY" \
             --title "Framecast ${GITHUB_REF_NAME}" \
             --generate-notes \
             --notes "$(cat <<'EOF'
-          ## Download
-          - **Apple Silicon (M1 and later):** `Framecast-*-macOS-arm64.zip`
-          - **Intel:** `Framecast-*-macOS-x86_64.zip`
+          ## Install
+          Download the installer for your Mac, open it, and drag **Framecast** into **Applications**:
+          - **Apple Silicon (M1 and later):** `Framecast-*-Apple-Silicon.dmg`
+          - **Intel:** `Framecast-*-Intel.dmg`
 
-          Requires macOS 15 or later.
+          Requires macOS 15 or later. Not sure which Mac you have? Open  → About This Mac.
 
-          This build is not notarized. After unzipping and moving Framecast to Applications, open it once with
-          right-click → Open, or run: `xattr -dr com.apple.quarantine /Applications/Framecast.app`
+          This build is not notarized, so macOS blocks the first launch: right-click Framecast in Applications
+          and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/Framecast.app`.
 
           Already have Framecast? It updates itself: **Framecast → Check for Updates…**
+          (The `update` zips are what the in-app updater downloads; you don't need them.)
           EOF
           )"
