@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+- Timeline blocks are lit like real objects: glowing gold clips, vivid indigo zooms and gradient effect blocks, with centred labels
+- Wallpapers in a compact grid with categories, and favourites (right-click a wallpaper to add it)
+- Quieter waveform: silent stretches are left clean
+
 ## 1.3.0
 
 - Cinematic motion blur on the whole screen while zooming and panning, plus Focused and Smooth animation styles (new Animation panel)

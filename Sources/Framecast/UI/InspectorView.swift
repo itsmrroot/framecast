@@ -84,8 +84,16 @@ struct InspectorView: View {
 
 // MARK: - Background
 
+enum WallpaperCategory: String, CaseIterable, Identifiable {
+    case favorites, macOS
+    var id: String { rawValue }
+    var label: String { self == .favorites ? "Favorites" : "macOS" }
+}
+
 private struct BackgroundTab: View {
     @ObservedObject var model: EditorModel
+    @AppStorage("bg.wallpaperCategory") private var wallpaperCategory: WallpaperCategory = .macOS
+    @AppStorage("bg.favorites") private var favoritesStore = ""
 
     private var bg: BackgroundStyle { model.doc.style.background }
 
@@ -158,7 +166,24 @@ private struct BackgroundTab: View {
 
     private var wallpapers: some View {
         let current = bg.wallpaperPath ?? Backgrounds.defaultWallpaper()
-        return VStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                ForEach(WallpaperCategory.allCases) { cat in
+                    let on = wallpaperCategory == cat
+                    Button { wallpaperCategory = cat } label: {
+                        Group {
+                            if cat == .favorites { Image(systemName: on ? "star.fill" : "star") } else { Text(cat.label) }
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(on ? 0.1 : 0.04)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(on ? Theme.accent.opacity(0.7) : .clear))
+                        .foregroundStyle(on ? Theme.text : Theme.textDim)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             Button {
                 if let w = Backgrounds.wallpapers.filter({ $0.path != current }).randomElement() {
                     model.edit(.render) { $0.style.background.wallpaperPath = w.path }
@@ -169,17 +194,41 @@ private struct BackgroundTab: View {
         }
     }
 
+    @ViewBuilder
     private func wallpaperGrid(current: String?) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(Backgrounds.wallpapers, id: \.path) { url in
+        let list = wallpaperCategory == .favorites
+            ? Backgrounds.wallpapers.filter { favorites.contains($0.path) }
+            : Backgrounds.wallpapers
+        if list.isEmpty {
+            Text("Right-click a wallpaper and choose Add to Favorites to keep it here.")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 8), spacing: 6) {
+            ForEach(list, id: \.path) { url in
                 WallpaperThumb(path: url.path, selected: current == url.path)
                     .onTapGesture {
                         model.edit(.render) { $0.style.background.wallpaperPath = url.path; $0.style.background.kind = .wallpaper }
+                    }
+                    .contextMenu {
+                        if favorites.contains(url.path) {
+                            Button("Remove from Favorites") { toggleFavorite(url.path) }
+                        } else {
+                            Button("Add to Favorites") { toggleFavorite(url.path) }
+                        }
                     }
                     .help(url.deletingPathExtension().lastPathComponent)
             }
         }
     }
+
+    private func toggleFavorite(_ path: String) {
+        var f = favorites
+        if let i = f.firstIndex(of: path) { f.remove(at: i) } else { f.append(path) }
+        favoritesStore = f.joined(separator: "\n")
+    }
+
+    private var favorites: [String] { favoritesStore.split(separator: "\n").map(String.init) }
 
     private var gradients: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -320,9 +369,13 @@ private struct WallpaperThumb: View {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             }
         }
-        .aspectRatio(16.0 / 10.0, contentMode: .fit)
+        .aspectRatio(1, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 2 : 1))
+        // The selected one gets an inset white ring with a dark gap, like a focus ring.
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .strokeBorder(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 2 : 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).inset(by: 2)
+            .strokeBorder(selected ? Color.black.opacity(0.5) : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .task(id: path) {
             let p = path

@@ -22,7 +22,7 @@ struct TimelineView: View {
 
     private let rulerH: CGFloat = 24
     private let clipH: CGFloat = 60
-    private let zoomH: CGFloat = 32
+    private let zoomH: CGFloat = 40
     private let effectRowH: CGFloat = 24
     private let gap: CGFloat = 8
     private let inset: CGFloat = 18
@@ -250,16 +250,19 @@ struct TimelineView: View {
         let (s, e) = clipRange(c)
         let selected = model.selection == .clip(c.id)
         let w = max(2, CGFloat(e - s) * pps)
-        return RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Theme.clip.opacity(selected ? 0.92 : 0.78))
+        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(selected ? Theme.clipGradientSelected : Theme.clipGradient)
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Theme.fill.opacity(selected ? 0.95 : 0.12), lineWidth: selected ? 2 : 1)
+                // A light top edge makes the block look lit from above.
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(selected ? 0.9 : 0.28), Color.white.opacity(selected ? 0.9 : 0.04)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 2 : 1)
             )
+            .shadow(color: Theme.clip.opacity(selected ? 0.45 : 0.18), radius: selected ? 8 : 4, y: 2)
             .overlay {
                 if w > 60 {
                     VStack(spacing: 1) {
-                        Text("Clip").font(.system(size: 10.5, weight: .medium)).opacity(0.6)
+                        Text("Clip").font(.system(size: 10.5, weight: .medium)).opacity(0.45)
                         HStack(spacing: 4) {
                             Text(String(format: "%.1fs", (e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
                             if w > 110 {
@@ -269,7 +272,8 @@ struct TimelineView: View {
                         }
                         .fixedSize()
                     }
-                    .foregroundStyle(Color.black.opacity(0.75))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
                     .lineLimit(1)
                 }
             }
@@ -318,12 +322,13 @@ struct TimelineView: View {
                 let t = Double(x / pps)
                 if clips.contains(where: { t >= $0.0 && t <= $0.1 }) {
                     let i = min(n - 1, Int(t / max(model.sourceDuration, 0.01) * Double(n)))
-                    let h = max(1, CGFloat(peaks[i]) * 14)
+                    guard peaks[i] > 0.06 else { x += step; continue } // keep quiet stretches clean
+                    let h = CGFloat(peaks[i]) * 14
                     path.addRoundedRect(in: CGRect(x: x, y: mid - h, width: 1.6, height: h * 2), cornerSize: CGSize(width: 0.8, height: 0.8))
                 }
                 x += step
             }
-            ctx.fill(path, with: .color(Color.black.opacity(0.35)))
+            ctx.fill(path, with: .color(Color.white.opacity(0.3)))
         }
     }
 
@@ -421,19 +426,22 @@ struct TimelineView: View {
         let (s, e) = zoomRange(z)
         let selected = model.selection == .zoom(z.id)
         let w = max(4, CGFloat(e - s) * pps)
-        return RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(LinearGradient(colors: [Theme.zoom.opacity(selected ? 0.95 : 0.7), Theme.zoom.opacity(selected ? 0.75 : 0.5)],
-                                 startPoint: .top, endPoint: .bottom))
+        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(selected ? Theme.zoomGradientSelected : Theme.zoomGradient)
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Theme.fill.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Color(red: 0.75, green: 0.7, blue: 1).opacity(selected ? 1 : 0.55),
+                                                          Color(red: 0.75, green: 0.7, blue: 1).opacity(selected ? 1 : 0.15)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 2 : 1)
             )
-            .overlay(alignment: .leading) {
+            .shadow(color: Theme.zoom.opacity(selected ? 0.6 : 0.3), radius: selected ? 10 : 5, y: 2)
+            .opacity(model.doc.style.zoomsDisabled ? 0.4 : 1)
+            .overlay {
                 if w > 54 {
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(spacing: 1) {
                         if w > 90 {
                             Text(z.instant ? "Instant zoom" : (z.isAuto ? "Auto zoom" : "Zoom"))
-                                .font(.system(size: 9.5, weight: .medium)).opacity(0.7)
+                                .font(.system(size: 10, weight: .medium)).opacity(0.5)
                         }
                         HStack(spacing: 4) {
                             Image(systemName: "plus.magnifyingglass").font(.system(size: 9.5, weight: .semibold))
@@ -446,7 +454,6 @@ struct TimelineView: View {
                         }
                     }
                     .foregroundStyle(.white)
-                    .padding(.leading, 10)
                     .lineLimit(1)
                 }
             }
@@ -548,19 +555,24 @@ struct TimelineView: View {
         let w = max(4, CGFloat(en - s) * pps)
         let color = TimelineView.effectColor(e.kind)
         let title = e.kind == .text ? e.text : e.kind.label
-        return RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(color.opacity(selected ? 0.9 : 0.6))
+        return RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(LinearGradient(colors: [color.opacity(selected ? 0.7 : 0.45), color.opacity(selected ? 1 : 0.8)],
+                                 startPoint: .top, endPoint: .bottom))
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Theme.fill.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(selected ? 0.9 : 0.3), Color.white.opacity(selected ? 0.9 : 0.05)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 1.5 : 1)
             )
+            .shadow(color: color.opacity(selected ? 0.5 : 0.2), radius: selected ? 6 : 3, y: 1)
+            .opacity(e.disabled ? 0.4 : 1)
             .overlay(alignment: .leading) {
                 if w > 30 {
                     HStack(spacing: 4) {
-                        Image(systemName: e.kind.icon).font(.system(size: 10, weight: .semibold))
+                        Image(systemName: e.disabled ? "eye.slash" : e.kind.icon).font(.system(size: 10, weight: .semibold))
                         if w > 70 { Text(title).font(.system(size: 10.5, weight: .semibold)) }
                     }
-                    .foregroundStyle(.black.opacity(0.8))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
                     .padding(.leading, 8)
                     .lineLimit(1)
                 }

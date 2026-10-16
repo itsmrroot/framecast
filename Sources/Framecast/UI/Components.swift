@@ -24,6 +24,15 @@ enum Theme {
     static let accent = Color(red: 0.36, green: 0.27, blue: 0.97)
     static let zoom = Color(red: 0.42, green: 0.34, blue: 0.98)
     static let clip = Color(red: 0.86, green: 0.6, blue: 0.2)
+    /// Lit gradients for timeline blocks: darker at the top, glowing at the bottom.
+    static let clipGradient = LinearGradient(colors: [Color(red: 0.52, green: 0.35, blue: 0.11), Color(red: 0.80, green: 0.56, blue: 0.21)],
+                                             startPoint: .top, endPoint: .bottom)
+    static let clipGradientSelected = LinearGradient(colors: [Color(red: 0.62, green: 0.43, blue: 0.14), Color(red: 0.90, green: 0.64, blue: 0.25)],
+                                                     startPoint: .top, endPoint: .bottom)
+    static let zoomGradient = LinearGradient(colors: [Color(red: 0.27, green: 0.18, blue: 0.88), Color(red: 0.46, green: 0.37, blue: 1.0)],
+                                             startPoint: .top, endPoint: .bottom)
+    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.33, green: 0.23, blue: 0.95), Color(red: 0.53, green: 0.45, blue: 1.0)],
+                                                     startPoint: .top, endPoint: .bottom)
     static let record = Color(red: 1.0, green: 0.27, blue: 0.3)
     static let text = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.87), dark: NSColor(white: 1, alpha: 0.92)))
     static let textDim = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.55), dark: NSColor(white: 1, alpha: 0.55)))
