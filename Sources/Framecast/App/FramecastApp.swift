@@ -20,20 +20,26 @@ struct FramecastApp: App {
             }
         }
 
-        Settings {
-            SettingsView()
-        }
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { WindowManager.shared.showSettings() }
+                    .keyboardShortcut(",", modifiers: [.command])
+            }
             CommandGroup(replacing: .newItem) {
-                Button("New Recording") { RecordingCoordinator.shared.toggleRecording() }
+                Button("New Recording…") { RecordingToolbar.shared.show() }
+                    .keyboardShortcut("n", modifiers: [.command])
                 Button("Show Recordings") { WindowManager.shared.showHome() }
                     .keyboardShortcut("0", modifiers: [.command])
                 Divider()
                 Button("Import Video…") { ProjectLibrary.shared.importVideo() }
                     .keyboardShortcut("i", modifiers: [.command])
+            }
+            CommandGroup(replacing: .saveItem) {
+                Button("Save") { WindowManager.shared.activeEditor?.saveNow() }
+                    .keyboardShortcut("s", modifiers: [.command])
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { WindowManager.shared.undo() }
@@ -70,12 +76,15 @@ struct MenuBarContent: View {
             Button("Restart") { recorder.restart() }
             Button("Cancel Recording") { recorder.cancel() }
         } else {
-            Button("Start Recording  ⌘⇧2") { recorder.start() }
+            Button("New Recording…  ⌘⇧2") { RecordingToolbar.shared.show() }
+                .disabled(recorder.isActive)
+            Button("Record Display") { RecordingToolbar.shared.start(.display) }
                 .disabled(recorder.isActive)
         }
         Divider()
         Button("Open Framecast") { WindowManager.shared.showHome() }
         Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
+        Button("Settings…") { WindowManager.shared.showSettings() }
         Divider()
         Button("Quit Framecast") { NSApp.terminate(nil) }
     }
@@ -105,17 +114,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // Renders the recording toolbar to a PNG (floating panels are hidden from screenshots): --snapshot-toolbar <file>
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot-toolbar"), CommandLine.arguments.count > i + 1 {
+            let out = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+            Task { @MainActor in
+                await SourceCatalog.shared.refresh()
+                let r = ImageRenderer(content: RecordingToolbarView(toolbar: RecordingToolbar.shared).padding(20).background(Color(white: 0.3)))
+                r.scale = 2
+                if let cg = r.cgImage, let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) {
+                    try? data.write(to: out)
+                }
+                exit(0)
+            }
+            return
+        }
         if CommandLine.arguments.contains("--selftest") || CommandLine.arguments.contains("--recordtest") {
             SelfTest.runIfRequested()
             return
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        GlobalHotKey.shared.register {
-            RecordingCoordinator.shared.toggleRecording()
-        }
+        DeviceCapture.enableDiscovery()
+        HotKeyCenter.shared.registerAll()
         WindowManager.shared.showHome()
         Updater.shared.checkOnLaunch()
+        // Opens a window on launch (handy for screenshots): --show toolbar | settings
+        if let i = CommandLine.arguments.firstIndex(of: "--show"), CommandLine.arguments.count > i + 1 {
+            switch CommandLine.arguments[i + 1] {
+            case "toolbar": RecordingToolbar.shared.show()
+            case "settings": WindowManager.shared.showSettings()
+            default: break
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--open"), CommandLine.arguments.count > i + 1 {
             WindowManager.shared.openEditor(folder: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
         }
@@ -139,6 +169,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
 
     private var homeWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var editors: [URL: EditorWindowController] = [:]
     private var hiddenForRecording: [NSWindow] = []
 
@@ -173,10 +204,43 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.contentView = NSHostingView(rootView: HomeView())
             w.center()
             w.setFrameAutosaveName("FramecastHome")
+            w.delegate = self
             homeWindow = w
         }
+        NSApp.setActivationPolicy(.regular)
         homeWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showSettings() {
+        if settingsWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+                             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            w.title = "Settings"
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isReleasedWhenClosed = false
+            w.backgroundColor = NSColor(Theme.bg)
+            w.contentView = NSHostingView(rootView: SettingsWindowView())
+            w.center()
+            w.delegate = self
+            settingsWindow = w
+        }
+        NSApp.setActivationPolicy(.regular)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// With "Hide Dock icon" on, the icon only shows while a window is open or a recording is running.
+    func updateDockIcon() {
+        let visible = [homeWindow, settingsWindow].contains { $0?.isVisible == true } || !editors.isEmpty
+            || RecordingCoordinator.shared.isActive
+        let policy: NSApplication.ActivationPolicy = AppSettings.shared.hideDockIcon && !visible ? .accessory : .regular
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.async { self.updateDockIcon() }
     }
 
     func hideAllForRecording() {
@@ -206,7 +270,9 @@ final class WindowManager: NSObject, NSWindowDelegate {
             controller.onClose = { [weak self] in
                 self?.editors[folder] = nil
                 ProjectLibrary.shared.reload()
+                self?.updateDockIcon()
             }
+            NSApp.setActivationPolicy(.regular)
             editors[folder] = controller
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)

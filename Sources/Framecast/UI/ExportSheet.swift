@@ -13,7 +13,7 @@ struct ExportSheet: View {
         case failed(String)
     }
 
-    @State private var settings = ExportSettings()
+    @State private var settings = AppSettings.shared.exportSettings
     @State private var phase: Phase = .setup
     @State private var progress: Double = 0
     @State private var exporter: Exporter?
@@ -58,11 +58,13 @@ struct ExportSheet: View {
                         Text("24").tag(24); Text("30").tag(30); Text("60").tag(60)
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 260)
                 }
-                row("Quality") {
+                row("Compression") {
                     Picker("", selection: $settings.quality) {
                         ForEach(ExportQuality.allCases) { q in Text(q.label).tag(q) }
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 260)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 300)
                 }
+                Text(settings.quality.detail)
+                    .font(.system(size: 11)).foregroundStyle(Theme.textDim)
                 row("Codec") {
                     Picker("", selection: $settings.codec) {
                         ForEach(ExportCodec.allCases) { c in Text(c.label).tag(c) }

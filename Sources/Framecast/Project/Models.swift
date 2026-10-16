@@ -355,6 +355,8 @@ struct ProjectDocument: Codable {
     var style: Style
     var effects: [EffectSegment] = []
     var captions: [CaptionCue] = []
+    /// Moments marked while recording (source time).
+    var flags: [Double] = []
 
     init(name: String, createdAt: Date, info: RecordingInfo, clips: [Clip], zooms: [ZoomSegment], style: Style,
          effects: [EffectSegment] = [], captions: [CaptionCue] = []) {
@@ -380,6 +382,7 @@ struct ProjectDocument: Codable {
         style = try c.decode(Style.self, forKey: .style)
         effects = try c.decodeIfPresent([EffectSegment].self, forKey: .effects) ?? []
         captions = try c.decodeIfPresent([CaptionCue].self, forKey: .captions) ?? []
+        flags = try c.decodeIfPresent([Double].self, forKey: .flags) ?? []
     }
 }
 

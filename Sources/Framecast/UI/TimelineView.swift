@@ -5,6 +5,7 @@ struct TimelineView: View {
     @ObservedObject var model: EditorModel
     @State private var zoomLevel: CGFloat = 1
     @State private var drag: DragState?
+    @State private var newZoom: (Double, Double)?
 
     struct DragState {
         enum Kind { case clipLeft, clipRight, zoomMove, zoomLeft, zoomRight, effectMove, effectLeft, effectRight }
@@ -82,6 +83,18 @@ struct TimelineView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textFaint)
             Spacer()
+            if !model.doc.flags.isEmpty {
+                Menu {
+                    ForEach(Array(model.doc.flags.sorted().enumerated()), id: \.offset) { i, f in
+                        Button("Flag \(i + 1) at \(formatTime(f, fraction: true))") { model.seek(source: f) }
+                    }
+                } label: {
+                    Label("\(model.doc.flags.count)", systemImage: "flag.fill")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Jump to a flag you marked while recording")
+            }
             Image(systemName: "minus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
             Slider(value: $zoomLevel, in: 1...12).controlSize(.mini).frame(width: 110).tint(Theme.accent)
             Image(systemName: "plus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
@@ -146,6 +159,15 @@ struct TimelineView: View {
                 }
                 t += step
             }
+            for f in model.doc.flags {
+                let x = CGFloat(f) * pps
+                var flag = Path()
+                flag.move(to: CGPoint(x: x, y: 2)); flag.addLine(to: CGPoint(x: x, y: size.height))
+                ctx.stroke(flag, with: .color(Theme.accent), lineWidth: 1.5)
+                var pennant = Path()
+                pennant.move(to: CGPoint(x: x, y: 2)); pennant.addLine(to: CGPoint(x: x + 9, y: 5.5)); pennant.addLine(to: CGPoint(x: x, y: 9))
+                ctx.fill(pennant, with: .color(Theme.accent))
+            }
         }
         .frame(width: width, height: rulerH)
         .contentShape(Rectangle())
@@ -173,6 +195,7 @@ struct TimelineView: View {
                 })
 
             filmstrip(width: width, pps: pps)
+                .opacity(0.25)
                 .frame(width: width, height: clipH)
                 .mask(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
@@ -199,27 +222,26 @@ struct TimelineView: View {
         let selected = model.selection == .clip(c.id)
         let w = max(2, CGFloat(e - s) * pps)
         return RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Theme.clip.opacity(selected ? 0.16 : 0.06))
+            .fill(Theme.clip.opacity(selected ? 0.92 : 0.78))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Theme.clip.opacity(selected ? 1 : 0.45), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(Color.white.opacity(selected ? 0.95 : 0.12), lineWidth: selected ? 2 : 1)
             )
-            .overlay(alignment: .topLeading) {
-                if w > 70 {
-                    HStack(spacing: 4) {
-                        if abs(c.speed - 1) > 0.01 {
-                            Text("\(c.speed, specifier: "%g")×")
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Capsule().fill(Theme.clip))
-                                .foregroundStyle(.black)
+            .overlay {
+                if w > 60 {
+                    VStack(spacing: 1) {
+                        Text("Clip").font(.system(size: 10.5, weight: .medium)).opacity(0.6)
+                        HStack(spacing: 4) {
+                            Text(String(format: "%.1fs", (e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            if w > 110 {
+                                Image(systemName: "gauge.with.dots.needle.33percent").font(.system(size: 10.5, weight: .semibold))
+                                Text("\(c.speed, specifier: "%g")×").font(.system(size: 12, weight: .semibold))
+                            }
                         }
-                        Text(formatTime((e - s) / c.speed, fraction: true))
-                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.white)
-                            .shadow(radius: 2)
+                        .fixedSize()
                     }
-                    .padding(6)
+                    .foregroundStyle(Color.black.opacity(0.75))
+                    .lineLimit(1)
                 }
             }
             .contentShape(Rectangle())
@@ -274,17 +296,33 @@ struct TimelineView: View {
                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .foregroundStyle(Theme.zoom.opacity(0.25))
                 )
+                .overlay {
+                    if model.doc.zooms.isEmpty && newZoom == nil {
+                        Text("Click or drag to add zoom on cursor")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textDim)
+                    }
+                }
                 .overlay(alignment: .leading) {
-                    if model.doc.zooms.isEmpty {
-                        Label("Click here to add a zoom", systemImage: "plus.magnifyingglass")
-                            .font(.system(size: 11)).foregroundStyle(Theme.textFaint).padding(.leading, 10)
+                    if let (a, b) = newZoom {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Theme.zoom.opacity(0.45))
+                            .frame(width: max(4, CGFloat(abs(b - a)) * pps), height: zoomH)
+                            .offset(x: CGFloat(min(a, b)) * pps)
                     }
                 }
                 .frame(width: width, height: zoomH)
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { v in
-                    model.addZoom(at: Double(v.location.x / pps))
-                })
+                .gesture(DragGesture(minimumDistance: 4)
+                    .onChanged { v in
+                        newZoom = (Double(v.startLocation.x / pps), Double(max(0, v.location.x) / pps))
+                    }
+                    .onEnded { _ in
+                        if let (a, b) = newZoom { model.addZoom(from: a, to: b) }
+                        newZoom = nil
+                    }
+                    .exclusively(before: SpatialTapGesture().onEnded { v in
+                        model.addZoom(at: Double(v.location.x / pps))
+                    }))
 
             ForEach(model.doc.zooms) { z in
                 zoomBlock(z, pps: pps)

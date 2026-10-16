@@ -34,6 +34,9 @@ final class RecordingCoordinator: ObservableObject {
     private var camMic: CameraMicCapture?
     private var cursor: CursorRecorder?
     private var keys: KeystrokeRecorder?
+    private var device: DeviceCapture?
+    private var flags: [Double] = []
+    private var controlsHidden = false
     private var folder: URL?
     private var targetScreen: NSScreen?
     private var info: RecordingInfo?
@@ -77,7 +80,9 @@ final class RecordingCoordinator: ObservableObject {
         cursor?.start()
         keys?.start()
         phase = .recording
-        controlBar.show(on: targetScreen ?? NSScreen.main!, coordinator: self)
+        controlsHidden = !AppSettings.shared.showRecordingWidget
+        if !controlsHidden { controlBar.show(on: targetScreen ?? NSScreen.main!, coordinator: self) }
+        if AppSettings.shared.highlightRecordedArea, let rect = highlightRect { AreaHighlight.shared.show(around: rect) }
         ticker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.elapsed = self?.clock?.elapsed ?? 0 }
         }
@@ -90,6 +95,13 @@ final class RecordingCoordinator: ObservableObject {
         }
         if settings.cameraEnabled { _ = await AVCaptureDevice.requestAccess(for: .video) }
         if settings.micEnabled { _ = await AVCaptureDevice.requestAccess(for: .audio) }
+
+        flags = []
+        highlightRect = nil
+        if settings.kind == .device {
+            try await prepareDevice()
+            return
+        }
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -107,6 +119,8 @@ final class RecordingCoordinator: ObservableObject {
         var display: SCDisplay?
 
         switch settings.kind {
+        case .device:
+            throw RecordingError.sourceUnavailable("Device recording is set up separately.")
         case .display, .area:
             guard let d = content.displays.first(where: { $0.displayID == settings.displayID }) ?? content.displays.first else {
                 throw RecordingError.sourceUnavailable("No display available to record.")
@@ -135,6 +149,11 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         targetScreen = display.flatMap { NSScreen.screen(for: $0.displayID) } ?? NSScreen.main
+        if let primary = NSScreen.screens.first {
+            // Global top-left points → AppKit bottom-left coordinates, for the area highlight.
+            highlightRect = CGRect(x: captureRect.minX, y: primary.frame.maxY - captureRect.maxY,
+                                   width: captureRect.width, height: captureRect.height)
+        }
 
         let scale = CGFloat(filter.pointPixelScale)
         let pointSize = sourceRect?.size ?? filter.contentRect.size
@@ -171,11 +190,7 @@ final class RecordingCoordinator: ObservableObject {
 
         let camID = settings.cameraEnabled && !settings.cameraID.isEmpty ? settings.cameraID : nil
         let micID = settings.micEnabled && !settings.micID.isEmpty ? settings.micID : nil
-        if camID != nil || micID != nil {
-            let cm = try CameraMicCapture(cameraID: camID, micID: micID, folder: folder, clock: clock)
-            await cm.startRunning()
-            camMic = cm
-        }
+        try await startCameraMic(folder: folder, clock: clock)
 
         cursor = CursorRecorder(clock: clock, captureRect: captureRect, folder: folder)
         if settings.recordKeystrokes && KeystrokeRecorder.isTrusted {
@@ -186,6 +201,54 @@ final class RecordingCoordinator: ObservableObject {
                              pixelWidth: width, pixelHeight: height,
                              hasWebcam: camMic?.hasCamera ?? false, hasMic: camMic?.hasMic ?? false,
                              hasSystemAudio: settings.systemAudio, sourceName: sourceName, hasCursorData: true)
+    }
+
+    private var highlightRect: CGRect?
+
+    private func startCameraMic(folder: URL, clock: RecordingClock) async throws {
+        let camID = settings.cameraEnabled && !settings.cameraID.isEmpty ? settings.cameraID : nil
+        let micID = settings.micEnabled && !settings.micID.isEmpty ? settings.micID : nil
+        if camID != nil || micID != nil {
+            let cm = try CameraMicCapture(cameraID: camID, micID: micID, folder: folder, clock: clock,
+                                          cameraResolution: AppSettings.shared.cameraResolution)
+            if cm.hasCamera { CameraPreview.shared.attach(to: cm.session) }
+            await cm.startRunning()
+            camMic = cm
+        }
+    }
+
+    /// iPhone / iPad screen recording.
+    private func prepareDevice() async throws {
+        guard let dev = DeviceCatalog.iosDevice(id: settings.deviceID) else {
+            throw RecordingError.sourceUnavailable("Connect your iPhone or iPad with a cable, unlock it and trust this Mac, then try again.")
+        }
+        targetScreen = NSScreen.withMouse
+        let folder = ProjectLibrary.shared.newProjectFolder()
+        self.folder = folder
+        let clock = RecordingClock()
+        self.clock = clock
+        let capture = try DeviceCapture(device: dev, url: folder.appendingPathComponent(ProjectFiles.screen), clock: clock)
+        await capture.startRunning()
+        device = capture
+        try await startCameraMic(folder: folder, clock: clock)
+        let px = capture.pixelSize
+        info = RecordingInfo(duration: 0, pointWidth: px.width / 3, pointHeight: px.height / 3,
+                             pixelWidth: Int(px.width), pixelHeight: Int(px.height),
+                             hasWebcam: camMic?.hasCamera ?? false, hasMic: camMic?.hasMic ?? false,
+                             hasSystemAudio: capture.hasAudio, sourceName: dev.localizedName, hasCursorData: false)
+    }
+
+    /// Marks this moment; flags show up on the timeline.
+    func addFlag() {
+        guard isRecording, let clock else { return }
+        flags.append(clock.elapsed)
+        NSSound(named: "Pop")?.play()
+    }
+
+    func toggleControls() {
+        guard isRecording else { return }
+        controlsHidden.toggle()
+        if controlsHidden { controlBar.hide() } else { controlBar.show(on: targetScreen ?? NSScreen.main!, coordinator: self) }
     }
 
     func togglePause() {
@@ -210,10 +273,13 @@ final class RecordingCoordinator: ObservableObject {
         ticker?.invalidate()
         controlBar.hide()
 
+        AreaHighlight.shared.hide()
+        CameraPreview.shared.hide()
         let duration = clock.stop()
         let track = cursor?.stop() ?? CursorTrack()
         let keyEvents = keys?.stop() ?? []
         await screen?.finish(duration: duration)
+        await device?.finish(duration: duration)
         await camMic?.finish(duration: duration)
 
         // Some devices may never deliver a frame; reflect what was actually written.
@@ -228,8 +294,12 @@ final class RecordingCoordinator: ObservableObject {
         let zooms = settings.autoZoom
             ? ZoomGenerator.generate(from: track.clicks, duration: info.duration, scale: style.defaultZoomScale)
             : []
-        let doc = ProjectDocument(name: ProjectLibrary.defaultName(), createdAt: Date(), info: info,
-                                  clips: [Clip(start: 0, end: info.duration)], zooms: zooms, style: style)
+        var style2 = style
+        if !info.hasCursorData { style2.showCursor = false }
+        var doc = ProjectDocument(name: info.hasCursorData ? ProjectLibrary.defaultName() : "\(info.sourceName) \(ProjectLibrary.defaultName())",
+                                  createdAt: Date(), info: info,
+                                  clips: [Clip(start: 0, end: info.duration)], zooms: zooms, style: style2)
+        doc.flags = flags.filter { $0 < info.duration }
         ProjectIO.save(doc, folder: folder)
         await Thumbnailer.writeRawThumbnail(videoURL: folder.appendingPathComponent(ProjectFiles.screen),
                                             to: folder.appendingPathComponent(ProjectFiles.thumbnail))
@@ -239,7 +309,11 @@ final class RecordingCoordinator: ObservableObject {
         elapsed = 0
         ProjectLibrary.shared.reload()
         NSSound(named: "Glass")?.play()
-        WindowManager.shared.openEditor(folder: folder)
+        if AppSettings.shared.showQuickExportWidget {
+            QuickExportWidget.shared.show(folder: folder)
+        } else {
+            WindowManager.shared.openEditor(folder: folder)
+        }
     }
 
     func cancel() {
@@ -251,7 +325,10 @@ final class RecordingCoordinator: ObservableObject {
             _ = cursor?.stop()
             _ = keys?.stop()
             await screen?.cancel()
+            device?.cancel()
             camMic?.cancel()
+            AreaHighlight.shared.hide()
+            CameraPreview.shared.hide()
             await teardown(deleteFolder: true)
             phase = .idle
             elapsed = 0
@@ -268,7 +345,9 @@ final class RecordingCoordinator: ObservableObject {
             _ = cursor?.stop()
             _ = keys?.stop()
             await screen?.cancel()
+            device?.cancel()
             camMic?.cancel()
+            AreaHighlight.shared.hide()
             await teardown(deleteFolder: true)
             phase = .idle
             elapsed = 0
@@ -290,6 +369,7 @@ final class RecordingCoordinator: ObservableObject {
         camMic = nil
         cursor = nil
         keys = nil
+        device = nil
         clock = nil
         folder = nil
         info = nil

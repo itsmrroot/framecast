@@ -85,18 +85,36 @@ final class ProjectLibrary: ObservableObject {
 
     @Published private(set) var projects: [ProjectSummary] = []
 
-    let root: URL
+    /// Where projects are saved (Settings → Recording).
+    var root: URL {
+        URL(fileURLWithPath: (AppSettings.shared.projectsFolder as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    /// Where the quick export widget puts its files.
+    var exportsFolder: URL { root.appendingPathComponent("Exports", isDirectory: true) }
 
     private init() {
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies")
-        root = movies.appendingPathComponent("Framecast", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reload()
+    }
+
+    func changeFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = root
+        panel.message = "Choose where Framecast saves new projects"
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AppSettings.shared.projectsFolder = url.path
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
     }
 
     func reload() {
         let fm = FileManager.default
+        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
         let items = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         var result: [ProjectSummary] = []
         for folder in items where folder.pathExtension == "framecast" {

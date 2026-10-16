@@ -2,14 +2,15 @@ import SwiftUI
 import AppKit
 
 enum Theme {
-    static let bg = Color(red: 0.067, green: 0.067, blue: 0.078)
-    static let panel = Color(red: 0.102, green: 0.102, blue: 0.118)
-    static let raised = Color(red: 0.145, green: 0.145, blue: 0.165)
+    // Near-black surfaces with an indigo accent and a gold timeline.
+    static let bg = Color(red: 0.039, green: 0.039, blue: 0.051)
+    static let panel = Color(red: 0.071, green: 0.071, blue: 0.086)
+    static let raised = Color(red: 0.11, green: 0.11, blue: 0.13)
     static let hover = Color.white.opacity(0.07)
     static let border = Color.white.opacity(0.08)
-    static let accent = Color(red: 0.49, green: 0.42, blue: 1.0)
-    static let zoom = Color(red: 0.56, green: 0.46, blue: 1.0)
-    static let clip = Color(red: 0.98, green: 0.66, blue: 0.27)
+    static let accent = Color(red: 0.36, green: 0.27, blue: 0.97)
+    static let zoom = Color(red: 0.42, green: 0.34, blue: 0.98)
+    static let clip = Color(red: 0.86, green: 0.6, blue: 0.2)
     static let record = Color(red: 1.0, green: 0.27, blue: 0.3)
     static let text = Color.white.opacity(0.92)
     static let textDim = Color.white.opacity(0.55)

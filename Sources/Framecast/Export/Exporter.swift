@@ -4,6 +4,7 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 import AppKit
+import VideoToolbox
 
 enum ExportFormat: String, CaseIterable, Identifiable {
     case mp4, gif
@@ -31,15 +32,32 @@ enum ExportCodec: String, CaseIterable, Identifiable {
     var label: String { self == .h264 ? "H.264 (most compatible)" : "HEVC (smaller files)" }
 }
 
+/// Compression presets, named after where the video is going.
 enum ExportQuality: String, CaseIterable, Identifiable {
-    case standard, high, best
+    case best, high, standard, low
     var id: String { rawValue }
-    var label: String { rawValue.capitalized }
+    var label: String {
+        switch self {
+        case .best: return "Studio"
+        case .high: return "Social Media"
+        case .standard: return "Web"
+        case .low: return "Web (Low)"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .best: return "Highest quality for editing elsewhere or archiving. Large files."
+        case .high: return "Great for sharing on social media. Compression is barely noticeable."
+        case .standard: return "Smaller files for websites and docs. Some compression is visible up close."
+        case .low: return "Smallest files for quick previews and slow connections."
+        }
+    }
     var bitsPerPixel: Double {
         switch self {
-        case .standard: return 0.07
-        case .high: return 0.12
         case .best: return 0.2
+        case .high: return 0.12
+        case .standard: return 0.07
+        case .low: return 0.035
         }
     }
 }
@@ -52,6 +70,7 @@ struct ExportSettings {
     var quality: ExportQuality = .high
     var gifFPS: Int = 20
     var gifWidth: Int = 960
+    var disableHardwareAcceleration = false
 }
 
 struct ExportJob {
@@ -137,7 +156,7 @@ final class Exporter: @unchecked Sendable {
         if settings.codec == .h264 {
             compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
         }
-        let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        var videoSettings: [String: Any] = [
             AVVideoCodecKey: settings.codec == .h264 ? AVVideoCodecType.h264 : AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
@@ -147,7 +166,13 @@ final class Exporter: @unchecked Sendable {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
             AVVideoCompressionPropertiesKey: compression,
-        ])
+        ]
+        if settings.disableHardwareAcceleration {
+            videoSettings[AVVideoEncoderSpecificationKey] = [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false,
+            ]
+        }
+        let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         vIn.expectsMediaDataInRealTime = false
         writer.add(vIn)
 

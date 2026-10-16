@@ -35,6 +35,10 @@ final class EditorModel: ObservableObject {
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
     @Published private(set) var outputAspect: CGFloat = 16.0 / 9.0
+    /// Playback speed of the preview (negative plays backward), driven by J / K / L.
+    @Published private(set) var playbackRate: Float = 1
+    /// Full renders the preview at 1920 px; half at 960 px for slower Macs.
+    @Published var previewFull = true { didSet { scheduleRenderRefresh() } }
 
     let player = AVPlayer()
     private(set) var assets: ProjectAssets?
@@ -179,6 +183,7 @@ final class EditorModel: ObservableObject {
     }
 
     private func scheduleSave() {
+        guard AppSettings.shared.autosave else { return }
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -213,7 +218,7 @@ final class EditorModel: ObservableObject {
     }
 
     private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
-        let size = model.outputSize(longSide: 1920)
+        let size = model.outputSize(longSide: previewFull ? 1920 : 960)
         return CompositionBuilder.videoComposition(model: model, renderSize: size, fps: 60, duration: built.duration)
     }
 
@@ -261,8 +266,32 @@ final class EditorModel: ObservableObject {
             player.pause()
         } else {
             if compTime >= duration - 0.05 { seek(comp: 0) }
-            player.play()
+            player.rate = playbackRate > 0 ? playbackRate : 1
         }
+    }
+
+    /// L: play forward, faster each press. J: play backward, faster each press. K: stop and reset.
+    func shuttle(_ direction: Int) {
+        if direction == 0 {
+            player.pause()
+            playbackRate = 1
+            return
+        }
+        var rate = playbackRate
+        if direction > 0 {
+            rate = (!isPlaying || rate < 0) ? 1 : min(8, rate * 2)
+            if compTime >= duration - 0.05 { seek(comp: 0) }
+        } else {
+            guard player.currentItem?.canPlayReverse == true else { NSSound.beep(); return }
+            rate = (!isPlaying || rate > 0) ? -1 : max(-8, rate * 2)
+        }
+        playbackRate = rate
+        player.rate = rate
+    }
+
+    func setPlaybackRate(_ rate: Float) {
+        playbackRate = rate
+        if isPlaying { player.rate = rate }
     }
 
     func seek(comp: Double) {
@@ -310,6 +339,20 @@ final class EditorModel: ObservableObject {
         if let b = doc.clips.first(where: { abs($0.start - t) < 0.0001 }) { selection = .clip(b.id) }
     }
 
+    /// X: removes the part of the current clip before the playhead (back to the previous cut).
+    func removeSliceBefore() {
+        let t = sourceTime
+        guard let c = doc.clips.first(where: { t > $0.start + 0.05 && t <= $0.end }) else { NSSound.beep(); return }
+        if t >= c.end - 0.05 {
+            guard doc.clips.count > 1 else { NSSound.beep(); return }
+            edit(.timeline) { $0.clips.removeAll { $0.id == c.id } }
+        } else {
+            edit(.timeline) { d in
+                if let i = d.clips.firstIndex(where: { $0.id == c.id }) { d.clips[i].start = t }
+            }
+        }
+    }
+
     func deleteSelection() {
         switch selection {
         case .zoom(let id):
@@ -343,6 +386,16 @@ final class EditorModel: ObservableObject {
         let lo = i > 0 ? sorted[i - 1].end : 0
         let hi = i + 1 < sorted.count ? sorted[i + 1].start : sourceDuration
         return lo...hi
+    }
+
+    /// Adds a zoom over a dragged range.
+    func addZoom(from a: Double, to b: Double) {
+        let start = max(0, min(a, b)), end = min(sourceDuration, max(a, b))
+        guard end - start >= 0.4 else { addZoom(at: start); return }
+        if doc.zooms.contains(where: { $0.start < end && start < $0.end }) { NSSound.beep(); return }
+        let z = ZoomSegment(start: start, end: end, scale: doc.style.defaultZoomScale, mode: .followCursor, isAuto: false)
+        edit(.render) { $0.zooms.append(z) }
+        selection = .zoom(z.id)
     }
 
     func addZoom(at source: Double) {
@@ -577,9 +630,22 @@ final class EditorModel: ObservableObject {
         return ExportJob(built: built, model: makeRenderModel(for: built))
     }
 
+    private(set) var isTrashed = false
+
     func close() {
         player.pause()
+        guard !isTrashed else { return }
         saveNow()
+        if AppSettings.shared.useLastProjectStyle { PresetStore.shared.setDefault(doc.style) }
+    }
+
+    /// Moves the project to the Trash (the window closes).
+    func moveToTrash() {
+        player.pause()
+        saveWork?.cancel()
+        isTrashed = true
+        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+        ProjectLibrary.shared.reload()
     }
 }
 

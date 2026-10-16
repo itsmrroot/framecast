@@ -31,8 +31,13 @@ struct InspectorView: View {
             } else if let e = model.selectedEffect {
                 EffectDetail(model: model, effect: e)
             } else {
-                tabBar
-                Rectangle().fill(Theme.border).frame(height: 1)
+                HStack {
+                    Text(ui.inspectorTab.label)
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 46)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         switch ui.inspectorTab {

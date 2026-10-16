@@ -46,6 +46,12 @@ private struct RecordPanel: View {
                 }
                 .frame(width: 28, height: 28)
                 Text("Framecast").font(.system(size: 17, weight: .bold))
+                Text("v\(Updater.currentVersion)")
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .foregroundStyle(Theme.textDim)
+                    .help("Framecast \(Updater.currentVersion)")
                 Spacer()
                 UpdateBadge()
             }
@@ -59,7 +65,7 @@ private struct RecordPanel: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Record")
-                        PillPicker(options: CaptureKind.allCases, selection: $settings.kind, label: \.label, icon: \.icon)
+                        PillPicker(options: CaptureKind.homeCases, selection: $settings.kind, label: \.label, icon: \.icon)
                         sourceDetail
                     }
 
@@ -163,6 +169,7 @@ private struct RecordPanel: View {
         case .display: return true
         case .window: return settings.windowID != 0
         case .area: return settings.areaRect != nil
+        case .device: return catalog.devices.contains { $0.id == settings.deviceID }
         }
     }
 
@@ -194,6 +201,16 @@ private struct RecordPanel: View {
     @ViewBuilder
     private var sourceDetail: some View {
         switch settings.kind {
+        case .device:
+            if catalog.devices.isEmpty {
+                Text("Connect an iPhone or iPad with a cable and unlock it.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+            } else {
+                Picker("", selection: $settings.deviceID) {
+                    ForEach(catalog.devices) { d in Text(d.name).tag(d.id) }
+                }
+                .labelsHidden()
+            }
         case .display:
             displayPicker
         case .window:
@@ -275,10 +292,12 @@ private struct RecordPanel: View {
 
 // MARK: - Window picker
 
-private struct WindowPickerSheet: View {
+struct WindowPickerSheet: View {
     @ObservedObject var catalog: SourceCatalog
     @ObservedObject var settings: RecorderSettings
     @Binding var isPresented: Bool
+    /// Called after a window is picked (the recording toolbar starts recording right away).
+    var onPick: (() -> Void)? = nil
     @State private var thumbnails: [CGWindowID: NSImage] = [:]
 
     var body: some View {
@@ -296,6 +315,7 @@ private struct WindowPickerSheet: View {
                             settings.windowTitle = [w.owningApplication?.applicationName, w.title]
                                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " — ")
                             isPresented = false
+                            onPick?()
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack {
@@ -466,56 +486,5 @@ private struct ProjectCard: View {
         }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-    }
-}
-
-// MARK: - Settings
-
-struct SettingsView: View {
-    @ObservedObject private var presets = PresetStore.shared
-    @ObservedObject private var updater = Updater.shared
-
-    var body: some View {
-        Form {
-            Section("Shortcuts") {
-                LabeledContent("Start / stop recording", value: "⌘⇧2")
-                LabeledContent("Play / pause in editor", value: "Space")
-                LabeledContent("Split at playhead", value: "S")
-                LabeledContent("Add zoom at playhead", value: "Z")
-                LabeledContent("Add blur / title at playhead", value: "B / T")
-                LabeledContent("Delete selection", value: "⌫")
-            }
-            Section("Updates") {
-                Toggle("Check for new versions automatically", isOn: $updater.autoCheck)
-                LabeledContent("Version", value: Updater.currentVersion)
-                HStack {
-                    Button("Check Now") { Task { await updater.check(manual: true) } }
-                    if updater.phase == .checking { ProgressView().controlSize(.small) }
-                    if updater.phase == .upToDate { Text("You have the latest version.").foregroundStyle(.secondary) }
-                    if let r = updater.release {
-                        Button("Version \(r.version) is available") { updater.showWindow() }.buttonStyle(.link)
-                    }
-                }
-            }
-            Section("Storage") {
-                LabeledContent("Recordings folder", value: ProjectLibrary.shared.root.path)
-                Button("Reveal in Finder") { NSWorkspace.shared.open(ProjectLibrary.shared.root) }
-            }
-            Section("Presets") {
-                if presets.presets.isEmpty {
-                    Text("Save a style preset from the editor toolbar.").foregroundStyle(.secondary)
-                }
-                ForEach(presets.presets) { p in
-                    HStack {
-                        Text(p.name)
-                        Spacer()
-                        Button("Delete") { presets.remove(p) }
-                    }
-                }
-                Button("Reset default style") { presets.setDefault(Style()) }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 480, height: 560)
     }
 }

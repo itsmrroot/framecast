@@ -3,7 +3,7 @@ import AppKit
 import ScreenCaptureKit
 
 enum CaptureKind: String, CaseIterable, Identifiable {
-    case display, window, area
+    case display, window, area, device
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
     var icon: String {
@@ -11,8 +11,11 @@ enum CaptureKind: String, CaseIterable, Identifiable {
         case .display: return "display"
         case .window: return "macwindow"
         case .area: return "rectangle.dashed"
+        case .device: return "iphone"
         }
     }
+    /// Sources offered on the home screen (devices are picked from the recording toolbar).
+    static let homeCases: [CaptureKind] = [.display, .window, .area]
 }
 
 @MainActor
@@ -39,6 +42,7 @@ final class RecorderSettings: ObservableObject {
     @Published var fps: Int { didSet { d.set(fps, forKey: "rec.fps") } }
     @Published var autoZoom: Bool { didSet { d.set(autoZoom, forKey: "rec.autoZoom") } }
     @Published var recordKeystrokes: Bool { didSet { d.set(recordKeystrokes, forKey: "rec.keys") } }
+    @Published var deviceID: String { didSet { d.set(deviceID, forKey: "rec.deviceID") } }
 
     private init() {
         d.register(defaults: [
@@ -61,6 +65,7 @@ final class RecorderSettings: ObservableObject {
         fps = d.integer(forKey: "rec.fps")
         autoZoom = d.bool(forKey: "rec.autoZoom")
         recordKeystrokes = d.bool(forKey: "rec.keys")
+        deviceID = d.string(forKey: "rec.deviceID") ?? ""
     }
 }
 
@@ -73,11 +78,14 @@ final class SourceCatalog: ObservableObject {
     @Published private(set) var windows: [SCWindow] = []
     @Published private(set) var cameras: [DeviceCatalog.Device] = []
     @Published private(set) var microphones: [DeviceCatalog.Device] = []
+    /// Connected iPhones and iPads.
+    @Published private(set) var devices: [DeviceCatalog.Device] = []
     @Published private(set) var hasScreenPermission = CGPreflightScreenCaptureAccess()
 
     func refresh() async {
         cameras = DeviceCatalog.cameras()
         microphones = DeviceCatalog.microphones()
+        devices = DeviceCatalog.iosDevices()
         let settings = RecorderSettings.shared
         if settings.cameraID.isEmpty || !cameras.contains(where: { $0.id == settings.cameraID }) {
             settings.cameraID = cameras.first?.id ?? ""

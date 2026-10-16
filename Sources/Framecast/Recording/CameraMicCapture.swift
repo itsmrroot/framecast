@@ -21,7 +21,18 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private(set) var hasCamera = false
     private(set) var hasMic = false
 
-    init(cameraID: String?, micID: String?, folder: URL, clock: RecordingClock) throws {
+    /// The highest preset up to the chosen resolution (720, 1080 or 2160) that the camera supports.
+    static func preset(for resolution: Int, session: AVCaptureSession) -> AVCaptureSession.Preset {
+        let wanted: [AVCaptureSession.Preset]
+        switch resolution {
+        case 2160: wanted = [.hd4K3840x2160, .hd1920x1080, .hd1280x720]
+        case 1080: wanted = [.hd1920x1080, .hd1280x720]
+        default: wanted = [.hd1280x720]
+        }
+        return wanted.first { session.canSetSessionPreset($0) } ?? .high
+    }
+
+    init(cameraID: String?, micID: String?, folder: URL, clock: RecordingClock, cameraResolution: Int = 1080) throws {
         self.clock = clock
         cameraURL = cameraID != nil ? folder.appendingPathComponent(ProjectFiles.webcam) : nil
         micURL = micID != nil ? folder.appendingPathComponent(ProjectFiles.mic) : nil
@@ -31,7 +42,7 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         if let cameraID, let device = DeviceCatalog.camera(id: cameraID) {
             let input = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(input) { session.addInput(input) }
-            if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
+            session.sessionPreset = CameraMicCapture.preset(for: cameraResolution, session: session)
             videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
             videoOutput.alwaysDiscardsLateVideoFrames = true
             videoOutput.setSampleBufferDelegate(self, queue: queue)
@@ -167,6 +178,16 @@ enum DeviceCatalog {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera, .deskViewCamera],
                                          mediaType: .video, position: .unspecified)
             .devices.map { Device(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    /// iPhones and iPads connected by cable (needs `DeviceCapture.enableDiscovery()`).
+    static func iosDevices() -> [Device] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.external], mediaType: .muxed, position: .unspecified)
+            .devices.map { Device(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    static func iosDevice(id: String) -> AVCaptureDevice? {
+        AVCaptureDevice(uniqueID: id)
     }
 
     static func microphones() -> [Device] {

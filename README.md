@@ -60,11 +60,16 @@ Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it check
 <details open>
 <summary><b>🎬 Recording</b></summary>
 
+- A floating recording toolbar (<kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>2</kbd>): pick Display, Window, Area or Device, camera, microphone and system audio in one place
+- Live camera preview so you can see yourself while recording (never captured on screen)
+- Record an iPhone or iPad connected by cable
+- Recording flags (<kbd>⌘</kbd> <kbd>⌥</kbd> <kbd>⌃</kbd> <kbd>F</kbd>) mark moments that show up on the timeline
+- Dims everything outside the recorded area while recording
 - Record a full display, a single window (with a thumbnail picker), or a dragged area
 - System audio, microphone and webcam, each saved to its own file and kept in sync
 - 3 s or 5 s countdown, pause and resume, restart, cancel
 - Floating control bar and menu bar timer, both hidden from the recording
-- Global shortcut <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>2</kbd> to start or stop from anywhere
+- Customizable global shortcuts: start/stop, pause, restart, flag, record display/window/area, show/hide controls
 - Option to hide desktop icons
 - Optional keystroke recording. macOS never passes on keys typed into password fields.
 - One-click access to the system's Voice Isolation mic mode
@@ -102,6 +107,8 @@ Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it check
 - Save any frame as a PNG
 - Captions as `.srt`
 - Show in Finder, open, or copy to the clipboard and paste straight into Slack, Mail and similar apps
+- Compression presets: Studio, Social Media, Web, Web (Low)
+- Optional quick export widget after recording: export and copy in one click
 
 </details>
 
@@ -110,7 +117,9 @@ Recordings are saved to `~/Movies/Framecast`. Framecast updates itself: it check
 | Key | Action |
 | --- | --- |
 | <kbd>Space</kbd> | Play / pause |
-| <kbd>S</kbd> | Split clip at playhead |
+| <kbd>C</kbd> / <kbd>S</kbd> | Cut clip at playhead |
+| <kbd>X</kbd> | Remove the slice before the playhead |
+| <kbd>J</kbd> / <kbd>K</kbd> / <kbd>L</kbd> | Play backward / stop / play forward (press again to go faster) |
 | <kbd>Z</kbd> | Add zoom at playhead |
 | <kbd>B</kbd> | Add blur at playhead |
 | <kbd>T</kbd> | Add title at playhead |
