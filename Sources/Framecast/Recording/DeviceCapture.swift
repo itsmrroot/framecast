@@ -136,6 +136,7 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private func startWriterIfNeeded() -> Bool {
         if writer != nil { return writer?.status == .writing }
         guard let w = try? AVAssetWriter(outputURL: url, fileType: .mov) else { return false }
+        w.movieFragmentInterval = CMTime(value: 1, timescale: 1)
         let v = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),

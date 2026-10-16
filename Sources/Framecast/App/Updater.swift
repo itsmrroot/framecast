@@ -307,7 +307,7 @@ final class Updater: ObservableObject {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isReleasedWhenClosed = false
-        w.backgroundColor = NSColor(Theme.panel)
+        w.backgroundColor = Theme.nsPanel
         w.contentView = NSHostingView(rootView: UpdateView(updater: self))
         w.center()
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
@@ -340,7 +340,6 @@ struct UpdateView: View {
         .frame(width: 460, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
     }
 
     private var title: String {
@@ -367,7 +366,7 @@ struct UpdateView: View {
                 }
                 .frame(maxHeight: 140)
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.05)))
             }
             Link(destination: release.page) { Label("What's new", systemImage: "list.bullet") }
                 .font(.system(size: 12))

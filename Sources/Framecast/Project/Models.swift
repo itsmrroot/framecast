@@ -379,7 +379,8 @@ struct ProjectDocument: Codable {
         info = try c.decode(RecordingInfo.self, forKey: .info)
         clips = try c.decode([Clip].self, forKey: .clips)
         zooms = try c.decode([ZoomSegment].self, forKey: .zooms)
-        style = try c.decode(Style.self, forKey: .style)
+        // Projects from older versions lack newer style options; ProjectIO.load fills them in from defaults.
+        style = (try? c.decode(Style.self, forKey: .style)) ?? Style()
         effects = try c.decodeIfPresent([EffectSegment].self, forKey: .effects) ?? []
         captions = try c.decodeIfPresent([CaptionCue].self, forKey: .captions) ?? []
         flags = try c.decodeIfPresent([Double].self, forKey: .flags) ?? []

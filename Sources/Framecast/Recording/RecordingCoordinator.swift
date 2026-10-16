@@ -27,6 +27,8 @@ final class RecordingCoordinator: ObservableObject {
     @Published private(set) var elapsed: Double = 0
 
     var isActive: Bool { phase != .idle }
+    /// The project folder being recorded into, if any.
+    var currentFolder: URL? { folder }
     var isRecording: Bool { phase == .recording || phase == .paused }
 
     private var clock: RecordingClock?

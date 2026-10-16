@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.setActivationPolicy(.regular)
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        AppSettings.shared.applyAppearance()
         DeviceCapture.enableDiscovery()
         HotKeyCenter.shared.registerAll()
         WindowManager.shared.showHome()
@@ -200,7 +200,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
             w.minSize = NSSize(width: 860, height: 560)
-            w.backgroundColor = NSColor(Theme.bg)
+            w.backgroundColor = Theme.nsBg
             w.contentView = NSHostingView(rootView: HomeView())
             w.center()
             w.setFrameAutosaveName("FramecastHome")
@@ -220,7 +220,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
-            w.backgroundColor = NSColor(Theme.bg)
+            w.backgroundColor = Theme.nsBg
             w.contentView = NSHostingView(rootView: SettingsWindowView())
             w.center()
             w.delegate = self

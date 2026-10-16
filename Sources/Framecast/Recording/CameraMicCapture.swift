@@ -125,6 +125,7 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             guard let format = sb.formatDescription else { return }
             let dims = CMVideoFormatDescriptionGetDimensions(format)
             guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mov) else { return }
+            writer.movieFragmentInterval = CMTime(value: 1, timescale: 1)
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: Int(dims.width),
@@ -151,6 +152,7 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         guard let url = micURL else { return }
         if micWriter == nil {
             guard let writer = try? AVAssetWriter(outputURL: url, fileType: .m4a) else { return }
+            writer.movieFragmentInterval = CMTime(value: 1, timescale: 1)
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 48000,

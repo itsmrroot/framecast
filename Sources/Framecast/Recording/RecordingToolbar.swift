@@ -130,6 +130,8 @@ final class FloatingPanel: NSPanel {
         hasShadow = true
         sharingType = .none
         isReleasedWhenClosed = false
+        // Recording UI floats over whatever you record, so it stays dark in both modes.
+        appearance = NSAppearance(named: .darkAqua)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     }
 

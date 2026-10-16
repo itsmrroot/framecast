@@ -39,7 +39,7 @@ struct SettingsWindowView: View {
                             Text(t.label).font(.system(size: 12, weight: .medium))
                         }
                         .frame(width: 92, height: 62)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(tab == t ? Color.white.opacity(0.08) : .clear))
+                        .background(RoundedRectangle(cornerRadius: 10).fill(tab == t ? Theme.fill.opacity(0.08) : .clear))
                         .foregroundStyle(tab == t ? Theme.text : Theme.textDim)
                         .contentShape(Rectangle())
                     }
@@ -67,7 +67,6 @@ struct SettingsWindowView: View {
         }
         .frame(width: 760, height: 620)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -116,7 +115,7 @@ private struct Choice<T: Hashable>: View {
                     Text(label(o))
                         .font(.system(size: 13, weight: .medium))
                         .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(selection == o ? 0.1 : 0.04)))
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(selection == o ? 0.1 : 0.04)))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selection == o ? Theme.accent.opacity(0.8) : .clear))
                         .foregroundStyle(selection == o ? Theme.text : Theme.textDim)
                         .contentShape(Rectangle())
@@ -138,6 +137,9 @@ private struct GeneralSettings: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
+        SettingRow(title: "Appearance", detail: "Light, dark, or follow your Mac. The recording toolbar always stays dark.") {
+            Choice(options: AppAppearance.allCases, selection: $app.appearance) { $0.label }
+        }
         SettingToggle(title: "Start Framecast at login", detail: "Open Framecast automatically when you log in, ready in the menu bar.",
                       isOn: Binding(get: { app.launchAtLogin }, set: { app.launchAtLogin = $0 }))
         SettingToggle(title: "Hide Dock icon",
@@ -270,7 +272,7 @@ private struct ExportSettingsPane: View {
                 }
             }
             .padding(20)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.03)))
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.fill.opacity(0.03)))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.border))
         }
         .padding(.bottom, 8)
@@ -327,7 +329,7 @@ private struct ShortcutSettings: View {
                     Text(s.keys)
                         .font(.system(size: 14, weight: .medium))
                         .frame(minWidth: 120).padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.05)))
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(0.05)))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.border))
                 }
                 .padding(.vertical, 6)
@@ -375,7 +377,7 @@ private struct ShortcutRecorder: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(recording ? Theme.accent : (combo == nil ? Theme.textFaint : Theme.text))
                 .frame(minWidth: 150).padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.05)))
+                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(0.05)))
                 .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(recording ? Theme.accent : Theme.border))
                 .contentShape(Rectangle())
         }

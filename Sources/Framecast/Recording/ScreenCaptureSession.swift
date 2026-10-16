@@ -23,6 +23,8 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
         self.clock = clock
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        // Written in fragments, so the file stays playable if Framecast quits mid-recording.
+        writer.movieFragmentInterval = CMTime(value: 1, timescale: 1)
 
         let pixels = Double(width * height)
         let bitrate = Int(min(max(pixels * Double(fps) * 0.12, 8_000_000), 80_000_000))

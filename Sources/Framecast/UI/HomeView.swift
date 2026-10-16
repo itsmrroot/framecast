@@ -18,7 +18,6 @@ struct HomeView: View {
             LibraryView(library: library)
         }
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
         .focusEffectDisabled()
         .task { await catalog.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -49,11 +48,12 @@ private struct RecordPanel: View {
                 Text("v\(Updater.currentVersion)")
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(Theme.fill.opacity(0.08)))
                     .foregroundStyle(Theme.textDim)
                     .help("Framecast \(Updater.currentVersion)")
                 Spacer()
                 UpdateBadge()
+                AppearanceButton()
             }
             .padding(.top, 38)
             .padding(.horizontal, 20)
@@ -319,7 +319,7 @@ struct WindowPickerSheet: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.35))
+                                    RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.08))
                                     if let img = thumbnails[w.windowID] {
                                         Image(nsImage: img).resizable().aspectRatio(contentMode: .fit).padding(6)
                                     } else {
@@ -459,7 +459,7 @@ private struct ProjectCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
-                Rectangle().fill(Color.black.opacity(0.35))
+                Rectangle().fill(Theme.fill.opacity(0.08))
                     .aspectRatio(16.0 / 10.0, contentMode: .fit)
                     .overlay {
                         if let img = project.thumbnail {

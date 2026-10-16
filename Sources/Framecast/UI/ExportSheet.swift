@@ -38,7 +38,6 @@ struct ExportSheet: View {
         .padding(22)
         .frame(width: 460)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
     }
 
     // MARK: Setup
@@ -111,7 +110,7 @@ struct ExportSheet: View {
             .foregroundStyle(Theme.textDim)
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.05)))
     }
 
     private var outputSize: CGSize {

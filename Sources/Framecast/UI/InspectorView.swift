@@ -68,7 +68,7 @@ struct InspectorView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
                     .foregroundStyle(ui.inspectorTab == tab ? Theme.text : Theme.textDim)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(ui.inspectorTab == tab ? Color.white.opacity(0.1) : .clear))
+                    .background(RoundedRectangle(cornerRadius: 7).fill(ui.inspectorTab == tab ? Theme.fill.opacity(0.1) : .clear))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -124,7 +124,7 @@ private struct BackgroundTab: View {
                             .font(.system(size: 11.5, weight: .medium))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 7)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.accent.opacity(0.25) : Color.white.opacity(0.06)))
+                            .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.accent.opacity(0.25) : Theme.fill.opacity(0.06)))
                             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Theme.accent : .clear))
                             .contentShape(Rectangle())
                     }
@@ -215,7 +215,7 @@ private struct WallpaperThumb: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color.white.opacity(0.05))
+            Rectangle().fill(Theme.fill.opacity(0.05))
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             }
@@ -373,7 +373,7 @@ private struct FocusPicker: View {
                 if let frame {
                     Image(decorative: frame, scale: 1).resizable()
                 } else {
-                    Rectangle().fill(Color.white.opacity(0.06))
+                    Rectangle().fill(Theme.fill.opacity(0.06))
                 }
                 // visible area at this zoom level
                 let w = geo.size.width / zoom.scale, h = geo.size.height / zoom.scale
@@ -381,7 +381,7 @@ private struct FocusPicker: View {
                 let cy = clamp(zoom.focusY * geo.size.height, h / 2, geo.size.height - h / 2)
                 Rectangle()
                     .strokeBorder(Color.white, lineWidth: 1.5)
-                    .background(Color.white.opacity(0.08))
+                    .background(Theme.fill.opacity(0.08))
                     .frame(width: w, height: h)
                     .offset(x: cx - w / 2, y: cy - h / 2)
                 Circle().fill(Theme.zoom).frame(width: 12, height: 12)
@@ -427,7 +427,7 @@ private struct ClipDetail: View {
                                     Text("\(s, specifier: "%g")×")
                                         .font(.system(size: 12, weight: .medium))
                                         .frame(maxWidth: .infinity).padding(.vertical, 7)
-                                        .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.clip.opacity(0.3) : Color.white.opacity(0.06)))
+                                        .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Theme.clip.opacity(0.3) : Theme.fill.opacity(0.06)))
                                         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Theme.clip : .clear))
                                         .contentShape(Rectangle())
                                 }
@@ -541,7 +541,7 @@ private struct CameraTab: View {
                             model.edit(.render) { $0.style.camera.corner = c }
                         } label: {
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(selected ? Theme.accent.opacity(0.3) : Color.white.opacity(0.06))
+                                .fill(selected ? Theme.accent.opacity(0.3) : Theme.fill.opacity(0.06))
                                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? Theme.accent : .clear))
                                 .overlay(alignment: alignment(c)) {
                                     Circle().fill(selected ? Theme.accent : Theme.textDim).frame(width: 10, height: 10).padding(6)
@@ -688,7 +688,7 @@ private struct RegionPicker: View {
                     if let frame {
                         Image(decorative: frame, scale: 1).resizable()
                     } else {
-                        Rectangle().fill(Color.white.opacity(0.06))
+                        Rectangle().fill(Theme.fill.opacity(0.06))
                     }
                     if effect.kind == .spotlight {
                         Rectangle().fill(Color.black.opacity(0.5))

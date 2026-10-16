@@ -187,7 +187,7 @@ struct TimelineView: View {
     private func clipTrack(width: CGFloat, pps: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(Theme.fill.opacity(0.025))
                 .frame(width: width, height: clipH)
                 .gesture(SpatialTapGesture().onEnded { v in
                     model.selection = .none
@@ -225,7 +225,7 @@ struct TimelineView: View {
             .fill(Theme.clip.opacity(selected ? 0.92 : 0.78))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.white.opacity(selected ? 0.95 : 0.12), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(Theme.fill.opacity(selected ? 0.95 : 0.12), lineWidth: selected ? 2 : 1)
             )
             .overlay {
                 if w > 60 {
@@ -290,7 +290,7 @@ struct TimelineView: View {
     private func zoomTrack(width: CGFloat, pps: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(Theme.fill.opacity(0.025))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
@@ -340,7 +340,7 @@ struct TimelineView: View {
                                  startPoint: .top, endPoint: .bottom))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.white.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
+                    .strokeBorder(Theme.fill.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
             )
             .overlay(alignment: .leading) {
                 if w > 54 {
@@ -423,11 +423,11 @@ struct TimelineView: View {
     private func effectTrack(width: CGFloat, pps: CGFloat, rows: [UUID: Int], height: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(Theme.fill.opacity(0.025))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(Color.white.opacity(0.12))
+                        .foregroundStyle(Theme.fill.opacity(0.12))
                 )
                 .overlay(alignment: .leading) {
                     if model.doc.effects.isEmpty {
@@ -459,7 +459,7 @@ struct TimelineView: View {
             .fill(color.opacity(selected ? 0.9 : 0.6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Color.white.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
+                    .strokeBorder(Theme.fill.opacity(selected ? 0.9 : 0.15), lineWidth: selected ? 1.5 : 1)
             )
             .overlay(alignment: .leading) {
                 if w > 30 {
@@ -505,10 +505,10 @@ struct TimelineView: View {
     private func playhead(pps: CGFloat, height: CGFloat) -> some View {
         let x = CGFloat(model.sourceTime) * pps
         return ZStack(alignment: .top) {
-            Rectangle().fill(Color.white).frame(width: 2, height: height)
+            Rectangle().fill(Theme.text).frame(width: 2, height: height)
             Image(systemName: "arrowtriangle.down.fill")
                 .font(.system(size: 12))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.text)
                 .offset(y: -4)
         }
         .frame(width: 14, height: height)

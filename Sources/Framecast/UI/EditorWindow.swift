@@ -24,7 +24,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.title = model.doc.name
         window.minSize = NSSize(width: 1080, height: 700)
-        window.backgroundColor = NSColor(Theme.bg)
+        window.backgroundColor = Theme.nsBg
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         super.init(window: window)
@@ -117,7 +117,6 @@ struct EditorView: View {
                 .background(Theme.bg)
         }
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
         .focusEffectDisabled()
         .sheet(isPresented: $ui.showExport) {
             ExportSheet(model: model, isPresented: $ui.showExport)
@@ -167,6 +166,7 @@ private struct EditorToolbar: View {
                 }
                 IconButton(icon: "trash", help: "Move project to Trash") { confirmTrash = true }
                 Spacer()
+                AppearanceButton()
                 IconButton(icon: "command", help: "Keyboard shortcuts") { showShortcuts.toggle() }
                     .popover(isPresented: $showShortcuts, arrowEdge: .bottom) { ShortcutsPopover() }
                 Rectangle().fill(Theme.border).frame(width: 1, height: 18)
@@ -405,7 +405,7 @@ private struct TransportBar: View {
                 } label: {
                     Image(systemName: model.isPlaying ? "pause.circle" : "play.circle")
                         .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.text)
                 }
                 .buttonStyle(.plain)
                 .help("Play / pause (Space)")

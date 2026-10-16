@@ -10,6 +10,7 @@ final class AppSettings: ObservableObject {
     private let d = UserDefaults.standard
 
     // General
+    @Published var appearance: AppAppearance { didSet { d.set(appearance.rawValue, forKey: "app.appearance"); applyAppearance() } }
     @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon() } }
 
     // Recording
@@ -53,6 +54,7 @@ final class AppSettings: ObservableObject {
             "export.quality": ExportQuality.high.rawValue,
             "export.codec": ExportCodec.h264.rawValue,
         ])
+        appearance = AppAppearance(rawValue: d.string(forKey: "app.appearance") ?? "") ?? .dark
         hideDockIcon = d.bool(forKey: "app.hideDock")
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
         highlightRecordedArea = d.bool(forKey: "app.highlightArea")
@@ -94,6 +96,26 @@ final class AppSettings: ObservableObject {
         return s
     }
 
+    // MARK: Appearance
+
+    func applyAppearance() {
+        switch appearance {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+
+    /// Whether the app is showing dark mode right now (resolving "System").
+    var isDark: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    /// The sun / moon button: switches between light and dark.
+    func toggleAppearance() {
+        appearance = isDark ? .light : .dark
+    }
+
     // MARK: Launch at login
 
     var launchAtLogin: Bool {
@@ -130,6 +152,19 @@ final class AppSettings: ObservableObject {
         for key in d.dictionaryRepresentation().keys where key.hasPrefix("app.") || key.hasPrefix("export.")
             || key.hasPrefix("adv.") || key.hasPrefix("rec.") || key == "shortcuts" || key == "update.auto" {
             d.removeObject(forKey: key)
+        }
+    }
+}
+
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max"
+        case .dark: return "moon"
         }
     }
 }

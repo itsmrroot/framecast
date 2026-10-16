@@ -104,7 +104,7 @@ private struct QuickExportView: View {
                     if let img = widget.thumbnail {
                         Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
                     } else {
-                        Rectangle().fill(Color.white.opacity(0.08))
+                        Rectangle().fill(Theme.fill.opacity(0.08))
                     }
                 }
                 .frame(width: 96, height: 60)
