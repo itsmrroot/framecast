@@ -17,6 +17,12 @@ final class CursorRecorder: @unchecked Sendable {
     private var track = CursorTrack()
     private var lastPoint: CGPoint?
     private var lastButtons = 0
+    /// Framecast's own windows (global top-left points): clicks there aren't part of the recording.
+    private var ignoredRects: [CGRect] = []
+
+    func setIgnoredRects(_ rects: [CGRect]) {
+        lock.withLock { ignoredRects = rects }
+    }
     private var knownShapes: [String: String] = [:] // image hash -> id
     private var currentShape: String?
     private let arrowHash: String?
@@ -72,7 +78,8 @@ final class CursorRecorder: @unchecked Sendable {
             }
             for button in 0..<2 {
                 let mask = 1 << button
-                if buttons & mask != 0 && lastButtons & mask == 0 {
+                if buttons & mask != 0 && lastButtons & mask == 0,
+                   !ignoredRects.contains(where: { $0.contains(location) }) {
                     track.clicks.append(ClickEvent(t: t, x: p.x, y: p.y, button: button))
                 }
             }

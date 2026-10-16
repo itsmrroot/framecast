@@ -88,8 +88,27 @@ func decodeWithDefaults<T: Codable>(_ type: T.Type, from object: Any, defaults: 
     guard let defData = try? JSONEncoder().encode(defaults),
           let defObj = try? JSONSerialization.jsonObject(with: defData) as? [String: Any],
           let obj = object as? [String: Any] else { return defaults }
-    let merged = deepMerge(defObj, obj)
-    guard let data = try? JSONSerialization.data(withJSONObject: merged),
-          let value = try? JSONDecoder().decode(T.self, from: data) else { return defaults }
-    return value
+    func decode(_ o: [String: Any]) -> T? {
+        guard let data = try? JSONSerialization.data(withJSONObject: o) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+    if let value = decode(deepMerge(defObj, obj)) { return value }
+    // Some value is invalid (e.g. an option from a newer version): keep every key that decodes, drop the rest.
+    func sanitize(_ base: [String: Any], _ overlay: [String: Any], path: [String]) -> [String: Any] {
+        var good: [String: Any] = [:]
+        for (k, v) in overlay {
+            if let b = base[k] as? [String: Any], let o = v as? [String: Any] {
+                good[k] = sanitize(b, o, path: path + [k])
+            } else {
+                var trial = good
+                trial[k] = v
+                if decode(deepMerge(defObj, nest(trial, path))) != nil { good[k] = v }
+            }
+        }
+        return good
+    }
+    func nest(_ o: [String: Any], _ path: [String]) -> [String: Any] {
+        path.reversed().reduce(o) { [$1: $0] }
+    }
+    return decode(deepMerge(defObj, sanitize(defObj, obj, path: []))) ?? defaults
 }

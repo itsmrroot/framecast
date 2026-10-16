@@ -15,6 +15,7 @@ final class QuickExportWidget: ObservableObject {
     private(set) var folder: URL?
     private var panel: NSPanel?
     private var exporter: Exporter?
+    private var task: Task<Void, Never>?
 
     func show(folder: URL) {
         close()
@@ -39,6 +40,8 @@ final class QuickExportWidget: ObservableObject {
     }
 
     func close() {
+        task?.cancel()
+        task = nil
         exporter?.cancel()
         exporter = nil
         panel?.orderOut(nil)
@@ -62,10 +65,14 @@ final class QuickExportWidget: ObservableObject {
         guard let folder else { return }
         phase = .exporting(0)
         let settings = AppSettings.shared.exportSettings
-        Task {
+        let name = self.name
+        // Everything below belongs to this folder; a newer recording's widget must not be touched.
+        func current() -> Bool { self.folder == folder && !Task.isCancelled }
+        task = Task {
             do {
                 let model = try EditorModel(folder: folder)
-                for _ in 0..<200 where !model.isReady { try await Task.sleep(nanoseconds: 50_000_000) }
+                for _ in 0..<200 where !model.isReady && model.loadError == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+                guard current() else { return }
                 guard let job = model.exportJob() else { throw Exporter.ExportError.failed(model.loadError ?? "The recording couldn't be loaded.") }
                 let dir = ProjectLibrary.shared.exportsFolder
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -76,19 +83,24 @@ final class QuickExportWidget: ObservableObject {
                     url = dir.appendingPathComponent("\(base) \(n).\(settings.format.fileExtension)")
                     n += 1
                 }
+                guard current() else { return }
                 let exp = Exporter()
                 exporter = exp
                 try await exp.export(job: job, settings: settings, to: url) { p in
-                    DispatchQueue.main.async { if case .exporting = self.phase { self.phase = .exporting(p) } }
+                    DispatchQueue.main.async {
+                        guard self.folder == folder, case .exporting = self.phase else { return }
+                        self.phase = .exporting(p)
+                    }
                 }
+                guard current() else { return }
                 exporter = nil
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.writeObjects([url as NSURL])
                 phase = .done(url)
             } catch Exporter.ExportError.cancelled {
-                phase = .ready
+                if current() { phase = .ready }
             } catch {
-                phase = .failed(error.localizedDescription)
+                if current() { phase = .failed(error.localizedDescription) }
             }
         }
     }

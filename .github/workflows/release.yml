@@ -37,7 +37,13 @@ jobs:
 
       - name: Set version
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0-dev"; fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            # The in-app updater compares vX.Y.Z; reject tags it can't read.
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::Tag must look like v1.2.3 or v1.2.3-beta.1"; exit 1; }
+          else
+            VERSION="0.0.0-dev"
+          fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
@@ -108,7 +114,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip \
+          PRERELEASE=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && PRERELEASE="--prerelease"
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip $PRERELEASE \
             --repo "$GITHUB_REPOSITORY" \
             --title "Framecast ${GITHUB_REF_NAME}" \
             --generate-notes \

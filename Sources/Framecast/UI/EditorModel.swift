@@ -99,8 +99,12 @@ final class EditorModel: ObservableObject {
                 if doc.clips.count == 1, let c = doc.clips.first, c.start == 0 {
                     doc.clips[0].end = min(c.end, assets.screenDuration)
                 }
-                doc.clips = doc.clips.map { var c = $0; c.end = min(c.end, assets.screenDuration); return c }.filter { $0.duration > 0.05 }
-                if doc.clips.isEmpty { doc.clips = [Clip(start: 0, end: assets.screenDuration)] }
+                let d = assets.screenDuration
+                doc.clips = doc.clips.map { var c = $0; c.end = min(c.end, d); return c }.filter { $0.duration > 0.05 }
+                if doc.clips.isEmpty { doc.clips = [Clip(start: 0, end: d)] }
+                doc.zooms = doc.zooms.map { var z = $0; z.end = min(z.end, d); return z }.filter { $0.duration > 0.3 }
+                doc.effects = doc.effects.map { var e = $0; e.end = min(e.end, d); return e }.filter { $0.duration > 0.2 }
+                doc.captions = doc.captions.filter { $0.start < d }.map { var c = $0; c.end = min(c.end, d); return c }
             }
             rebuildComposition()
             isReady = true
@@ -266,7 +270,8 @@ final class EditorModel: ObservableObject {
             player.pause()
         } else {
             if compTime >= duration - 0.05 { seek(comp: 0) }
-            player.rate = playbackRate > 0 ? playbackRate : 1
+            if playbackRate <= 0 { playbackRate = 1 }
+            player.rate = playbackRate
         }
     }
 
@@ -284,6 +289,7 @@ final class EditorModel: ObservableObject {
         } else {
             guard player.currentItem?.canPlayReverse == true else { NSSound.beep(); return }
             rate = (!isPlaying || rate > 0) ? -1 : max(-8, rate * 2)
+            if compTime < 0.05 { seek(comp: duration) }
         }
         playbackRate = rate
         player.rate = rate
@@ -631,21 +637,40 @@ final class EditorModel: ObservableObject {
     }
 
     private(set) var isTrashed = false
+    /// Running caption transcription, cancelled when the window closes.
+    var captionTask: Task<Void, Never>?
 
     func close() {
         player.pause()
+        captionTask?.cancel()
+        captionTask = nil
         guard !isTrashed else { return }
         saveNow()
         if AppSettings.shared.useLastProjectStyle { PresetStore.shared.setDefault(doc.style) }
     }
 
     /// Moves the project to the Trash (the window closes).
-    func moveToTrash() {
+    /// Returns false (and keeps everything) if the project couldn't be moved to the Trash.
+    @discardableResult
+    func moveToTrash() -> Bool {
         player.pause()
+        do {
+            try FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.messageText = "Couldn't move the project to the Trash"
+            alert.runModal()
+            return false
+        }
         saveWork?.cancel()
         isTrashed = true
-        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
         ProjectLibrary.shared.reload()
+        return true
+    }
+
+    /// Picks up a name changed outside the editor (e.g. renamed from the library).
+    func adoptName(_ name: String) {
+        doc.name = name
     }
 }
 

@@ -531,10 +531,8 @@ private struct EdgeHandle: View {
             .padding(.vertical, 8)
             .frame(width: 12)
             .contentShape(Rectangle())
-            .onHover { inside in
-                hover = inside
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-            }
+            .onHover { hover = $0 }
+            .pointerStyle(.frameResize(position: .trailing, directions: [.inward, .outward]))
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { v in onDrag(v.translation.width, false) }
                 .onEnded { v in onDrag(v.translation.width, true) })

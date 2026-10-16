@@ -19,6 +19,7 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private var lastFrame: CMSampleBuffer?
     private var lastTime: CMTime = .invalid
     private var stopped = false
+    private var audioOrder = AudioOrderGuard()
     private(set) var hasAudio = false
 
     /// Lets macOS expose connected iOS devices as capture devices. Call once at launch.
@@ -78,6 +79,12 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
                 stopped = true
+                // A still iPhone screen may send no frame after recording began: write the last one anyway.
+                if writer == nil, lastFrame != nil, startWriterIfNeeded(), let first = lastFrame,
+                   let b = SampleRetimer.stamped(first, at: .zero) {
+                    videoInput?.append(b)
+                    lastTime = .zero
+                }
                 guard let writer, let videoInput, writer.status == .writing else {
                     writer?.cancelWriting()
                     cont.resume()
@@ -96,6 +103,15 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             }
         }
         session.stopRunning()
+    }
+
+    /// Writes the latest frame at `time` after a resume (a still device screen sends no new frames).
+    func refreshAfterResume(at time: CMTime) {
+        queue.async { [self] in
+            guard let input = videoInput, input.isReadyForMoreMediaData, let last = lastFrame,
+                  !lastTime.isValid || time > lastTime, let b = SampleRetimer.stamped(last, at: time) else { return }
+            if input.append(b) { lastTime = time }
+        }
     }
 
     func cancel() {
@@ -128,7 +144,7 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
                 lastFrame = sb
             }
         } else if output === audioOutput, let input = audioInput, input.isReadyForMoreMediaData, writer != nil, t >= .zero,
-                  let b = SampleRetimer.shifted(sb, by: CMTimeSubtract(pts, t)) {
+                  let b = SampleRetimer.shifted(sb, by: CMTimeSubtract(pts, t)), audioOrder.accept(b) {
             input.append(b)
         }
     }

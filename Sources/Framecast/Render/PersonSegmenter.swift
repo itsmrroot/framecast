@@ -3,23 +3,17 @@ import CoreImage
 import Vision
 
 /// Separates the person from the background in webcam frames (for background blur / removal).
+/// Each frame is segmented on its own: preview, export and thumbnails render different frames at the
+/// same time, so a shared stateful sequence would mix their masks.
 final class PersonSegmenter: @unchecked Sendable {
-    private let lock = NSLock()
-    private let request: VNGeneratePersonSegmentationRequest = {
-        let r = VNGeneratePersonSegmentationRequest()
-        r.qualityLevel = .balanced
-        r.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        return r
-    }()
-    private let handler = VNSequenceRequestHandler()
-
     /// Returns a mask (white = person) scaled to the image's extent, or nil if segmentation failed.
     func mask(for image: CIImage) -> CIImage? {
-        lock.lock()
-        defer { lock.unlock() }
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .balanced
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let input = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         do {
-            try handler.perform([request], on: input)
+            try VNImageRequestHandler(ciImage: input).perform([request])
         } catch {
             return nil
         }

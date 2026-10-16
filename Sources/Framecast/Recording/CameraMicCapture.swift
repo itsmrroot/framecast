@@ -16,6 +16,7 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private var micWriter: AVAssetWriter?
     private var micInput: AVAssetWriterInput?
     private var lastCamTime: CMTime = .invalid
+    private var micOrder = AudioOrderGuard()
     private var stopped = false
 
     private(set) var hasCamera = false
@@ -167,7 +168,7 @@ final class CameraMicCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             micInput = input
         }
         guard let input = micInput, input.isReadyForMoreMediaData,
-              let b = SampleRetimer.shifted(sb, by: shift) else { return }
+              let b = SampleRetimer.shifted(sb, by: shift), micOrder.accept(b) else { return }
         input.append(b)
     }
 }

@@ -128,7 +128,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-        if CommandLine.arguments.contains("--selftest") || CommandLine.arguments.contains("--recordtest") {
+        if CommandLine.arguments.contains("--selftest") || CommandLine.arguments.contains("--recordtest")
+            || CommandLine.arguments.contains("--checks") {
             SelfTest.runIfRequested()
             return
         }
@@ -182,11 +183,24 @@ final class WindowManager: NSObject, NSWindowDelegate {
     var activeEditor: EditorModel? { activeEditorController?.model }
 
     func undo() {
-        if let e = activeEditor { e.undo() } else { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
+        // While typing, ⌘Z undoes the text, not the project.
+        if NSApp.keyWindow?.firstResponder is NSTextView || activeEditor == nil {
+            NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+        } else {
+            activeEditor?.undo()
+        }
     }
 
     func redo() {
-        if let e = activeEditor { e.redo() } else { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+        if NSApp.keyWindow?.firstResponder is NSTextView || activeEditor == nil {
+            NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
+        } else {
+            activeEditor?.redo()
+        }
+    }
+
+    func editor(for folder: URL) -> EditorModel? {
+        editors.first { $0.key.standardizedFileURL.path == folder.standardizedFileURL.path }?.value.model
     }
 
     func showHome() {
@@ -244,11 +258,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 
     func hideAllForRecording() {
-        hiddenForRecording = NSApp.windows.filter { w in
-            w.isVisible && (w === homeWindow || editors.values.contains { $0.window === w })
+        // Added to (not replaced): a restart hides again while the first start's windows are still hidden.
+        let visible = NSApp.windows.filter { w in
+            w.isVisible && (w === homeWindow || w === settingsWindow || editors.values.contains { $0.window === w })
         }
+        for w in visible where !hiddenForRecording.contains(where: { $0 === w }) { hiddenForRecording.append(w) }
         editors.values.forEach { $0.model.player.pause() }
-        for w in hiddenForRecording { w.orderOut(nil) }
+        for w in visible { w.orderOut(nil) }
     }
 
     private func restoreHidden() {

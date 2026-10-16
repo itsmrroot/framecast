@@ -8,6 +8,14 @@ import ScreenCaptureKit
 enum SelfTest {
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if args.contains("--checks") {
+            Task { @MainActor in
+                let failures = await runChecks(video: args.last.map { URL(fileURLWithPath: $0) })
+                print(failures == 0 ? "CHECKS OK" : "CHECKS FAILED: \(failures)")
+                exit(failures == 0 ? 0 : 1)
+            }
+            return
+        }
         if let i = args.firstIndex(of: "--recordtest"), args.count > i + 2 {
             let seconds = Double(args[i + 1]) ?? 4
             let outDir = URL(fileURLWithPath: args[i + 2])
@@ -38,8 +46,85 @@ enum SelfTest {
         }
     }
 
+    /// Logic checks for the trickiest pieces: `Framecast --checks [video]`.
     @MainActor
-    private static func run(video: URL, outDir: URL) async throws {
+    private static func runChecks(video: URL?) async -> Int {
+        var failures = 0
+        func check(_ ok: Bool, _ name: String) {
+            print((ok ? "  ok   " : "  FAIL ") + name)
+            if !ok { failures += 1 }
+        }
+
+        // Clock: samples are placed by their own timestamp around pauses.
+        let clock = RecordingClock()
+        clock.begin()
+        let t0 = RecordingClock.hostNow
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        let beforePause = RecordingClock.hostNow
+        clock.pause()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let duringPause = RecordingClock.hostNow
+        clock.resume()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let afterResume = RecordingClock.hostNow
+        let late = clock.recordingTime(hostTime: beforePause) // delivered after the resume
+        check(late != nil && abs(late! - CMTimeSubtract(beforePause, t0).seconds) < 0.01, "late sample from before a pause keeps its time")
+        check(clock.offset(forHostTime: duringPause) == nil, "sample inside a pause is dropped")
+        let after = clock.recordingTime(hostTime: afterResume) ?? -1
+        check(after > 0.25 && after < 0.4, "time after resume excludes the pause (\(String(format: "%.2f", after))s)")
+        let total = clock.stop().seconds
+        check(total > 0.25 && total < 0.45, "duration excludes the pause (\(String(format: "%.2f", total))s)")
+        check(clock.offset(forHostTime: CMTimeAdd(RecordingClock.hostNow, CMTime(seconds: 1, preferredTimescale: 600))) == nil, "samples after stop are dropped")
+
+        // Updater version ordering.
+        check(Updater.isNewer("1.1.1", than: "1.1.0"), "1.1.1 > 1.1.0")
+        check(!Updater.isNewer("1.1.0", than: "1.1.0"), "same version is not newer")
+        check(Updater.isNewer("1.2.0", than: "1.2.0-beta.1"), "release beats its pre-release")
+        check(!Updater.isNewer("1.2.0-beta.1", than: "1.2.0"), "pre-release doesn't beat the release")
+        check(!Updater.isNewer("1.2", than: "1.1.0"), "malformed tag is ignored")
+
+        // Lenient decoding keeps good values and drops only bad ones.
+        let style = decodeWithDefaults(Style.self, from: ["padding": 0.2, "aspect": "futureAspect", "camera": ["size": 0.4, "shape": "hexagon"]], defaults: Style())
+        check(abs(style.padding - 0.2) < 0.0001, "valid value survives next to an invalid one")
+        check(style.aspect == .auto, "invalid aspect falls back to default")
+        check(abs(style.camera.size - 0.4) < 0.0001 && style.camera.shape == .circle, "nested: good kept, bad dropped")
+
+        // ClipOps never leaves slivers and keeps total source coverage when speeding up.
+        let clips = ClipOps.apply([(0.03, 2.0), (5.0, 9.97)], to: [Clip(start: 0, end: 10)], speed: 4)
+        let covered = clips.reduce(0) { $0 + $1.duration }
+        check(abs(covered - 10) < 0.0001, "speed-up keeps all footage (\(clips.count) pieces)")
+        check(clips.first?.start == 0 && clips.last?.end == 10, "no slivers at the edges")
+        check(zip(clips, clips.dropFirst()).allSatisfy { abs($0.end - $1.start) < 0.0001 }, "pieces are contiguous")
+
+        // Export cancel must return promptly (it used to hang waiting on the audio input).
+        if let video, FileManager.default.fileExists(atPath: video.path) {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("framecast-checks-\(UUID().uuidString)")
+            do {
+                try await run(video: video, outDir: dir, exportFiles: false)
+                let model = try EditorModel(folder: dir.appendingPathComponent("Test.framecast"))
+                for _ in 0..<200 where !model.isReady { try await Task.sleep(nanoseconds: 50_000_000) }
+                if let job = model.exportJob() {
+                    let exp = Exporter()
+                    let started = Date()
+                    let task = Task { try await exp.export(job: job, settings: ExportSettings(), to: dir.appendingPathComponent("c.mp4")) { _ in } }
+                    try await Task.sleep(nanoseconds: 700_000_000)
+                    exp.cancel()
+                    var cancelled = false
+                    do { try await task.value } catch Exporter.ExportError.cancelled { cancelled = true } catch {}
+                    let took = Date().timeIntervalSince(started)
+                    check(cancelled && took < 5, "export cancel returns (\(String(format: "%.1f", took))s)")
+                    check(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("c.mp4").path), "cancelled export leaves no file")
+                }
+            } catch {
+                check(false, "export cancel setup: \(error)")
+            }
+            try? FileManager.default.removeItem(at: dir)
+        }
+        return failures
+    }
+
+    @MainActor
+    private static func run(video: URL, outDir: URL, exportFiles: Bool = true) async throws {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let folder = outDir.appendingPathComponent("Test.framecast")
         try? FileManager.default.removeItem(at: folder)
@@ -100,6 +185,7 @@ enum SelfTest {
         let split = ClipOps.apply([(2.0, 4.0)], to: [Clip(start: 0, end: 10)], speed: 4)
         print("idle ranges: \(idle.count), clip ops: \(split.map { String(format: "%.1f-%.1f@%g", $0.start, $0.end, $0.speed) })")
         print("zooms: \(zooms.map { String(format: "%.2f-%.2f", $0.start, $0.end) })")
+        guard exportFiles else { return }
 
         let model = try EditorModel(folder: folder)
         for _ in 0..<200 where !model.isReady { try await Task.sleep(nanoseconds: 50_000_000) }

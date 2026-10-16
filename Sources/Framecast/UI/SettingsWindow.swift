@@ -387,6 +387,7 @@ private struct ShortcutRecorder: View {
 
     private func start() {
         recording = true
+        HotKeyCenter.shared.suspend()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             if e.keyCode == 53 { stop(); return nil } // Esc
             if let c = KeyCombo(event: e) {
@@ -400,9 +401,11 @@ private struct ShortcutRecorder: View {
     }
 
     private func stop() {
+        let wasRecording = recording
         recording = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if wasRecording { HotKeyCenter.shared.registerAll() }
     }
 }
 

@@ -70,9 +70,11 @@ enum Transcriber {
             let url = tmp.appendingPathComponent("chunk\(index).m4a")
             try await exportAudio(asset: asset, from: start, to: end, to: url)
             let segments = try await recognize(url: url, recognizer: recognizer)
-            // Keep only words that start inside this chunk's own (non-overlapping) span.
-            let keepFrom = index == 0 ? 0 : overlap
-            for seg in segments where seg.timestamp >= keepFrom - 0.01 {
+            // Neighbouring chunks overlap by `overlap` seconds; split the overlap in the middle so a word at
+            // the edge of one chunk (often cut off) comes from the next chunk, where it's whole.
+            let keepFrom = index == 0 ? 0 : overlap / 2
+            let keepUntil = end >= duration ? Double.infinity : (end - start) - overlap / 2
+            for seg in segments where seg.timestamp >= keepFrom && seg.timestamp < keepUntil {
                 words.append((start + seg.timestamp, seg.duration, seg.substring))
             }
             progress(min(0.99, end / duration))
@@ -142,7 +144,7 @@ enum Transcriber {
         // Hold each line a little longer when there's room before the next one.
         for i in cues.indices {
             let next = i + 1 < cues.count ? cues[i + 1].start : cues[i].end + 1
-            cues[i].end = min(next - 0.05, cues[i].end + 0.6)
+            cues[i].end = max(cues[i].start + 0.1, min(next - 0.05, cues[i].end + 0.6))
         }
         return cues
     }

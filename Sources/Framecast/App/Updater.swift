@@ -81,8 +81,18 @@ final class Updater: ObservableObject {
 
     static func isNewer(_ candidate: String, than current: String) -> Bool {
         guard let a = parseVersion(candidate), let b = parseVersion(current) else { return false }
-        return b.lexicographicallyPrecedes(a)
+        if a != b { return b.lexicographicallyPrecedes(a) }
+        // Same numbers: a final release (1.2.0) is newer than a pre-release (1.2.0-beta.1).
+        return isPrerelease(current) && !isPrerelease(candidate)
     }
+
+    static func isPrerelease(_ v: String) -> Bool {
+        v.trimmingCharacters(in: .whitespaces).contains("-")
+    }
+
+    /// Leaf certificate of the release signing identity. Once a release build is installed, updates must be
+    /// signed with the same certificate, so a tampered download can't install itself.
+    nonisolated static let releaseCertificateHash = "dec07d59af7d6f3f3250b1301b49394ff333fd22"
 
     // MARK: Checking
 
@@ -138,8 +148,11 @@ final class Updater: ObservableObject {
 
     /// Whether "Update Now" can install it here, rather than open the download page.
     var canInstall: Bool {
-        guard release?.asset != nil, Bundle.main.bundleURL.pathExtension == "app" else { return false }
-        return true
+        let app = Bundle.main.bundleURL
+        guard release?.asset != nil, app.pathExtension == "app",
+              !app.path.contains("/AppTranslocation/"), !app.path.hasPrefix("/Volumes/") else { return false }
+        let fm = FileManager.default
+        return fm.isWritableFile(atPath: app.deletingLastPathComponent().path) && fm.isWritableFile(atPath: app.path)
     }
 
     func updateNow() {
@@ -160,7 +173,7 @@ final class Updater: ObservableObject {
             // The temporary file is deleted when this returns, so move it first.
             var moved: URL?
             if let tmp, error == nil {
-                let dest = dir.appendingPathComponent(asset.name)
+                let dest = dir.appendingPathComponent("update.zip")
                 if (try? FileManager.default.moveItem(at: tmp, to: dest)) != nil { moved = dest }
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -213,9 +226,8 @@ final class Updater: ObservableObject {
     nonisolated private static func prepare(file: URL, release: Release, asset: Asset) throws -> URL {
         let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
         guard (attrs[.size] as? NSNumber)?.int64Value == asset.size else { throw Failure("The download is incomplete.") }
-        if let want = asset.sha256 {
-            guard try sha256(of: file) == want else { throw Failure("The download is damaged (checksum mismatch).") }
-        }
+        guard let want = asset.sha256 else { throw Failure("The release has no checksum, so it can't be verified.") }
+        guard try sha256(of: file) == want else { throw Failure("The download is damaged (checksum mismatch).") }
         let out = file.deletingLastPathComponent().appendingPathComponent("unpacked", isDirectory: true)
         try? FileManager.default.removeItem(at: out)
         try run("/usr/bin/ditto", ["-x", "-k", file.path, out.path])
@@ -230,6 +242,14 @@ final class Updater: ObservableObject {
         }
         try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
         try run("/usr/bin/codesign", ["--verify", "--deep", app.path])
+        if runningReleaseBuild {
+            let requirement = "identifier \"\(Bundle.main.bundleIdentifier ?? "com.framecast.app")\" and certificate leaf = H\"\(releaseCertificateHash)\""
+            do {
+                try run("/usr/bin/codesign", ["--verify", "--deep", "-R=\(requirement)", app.path])
+            } catch {
+                throw Failure("The download isn't signed by Framecast's release certificate.")
+            }
+        }
         return app
     }
 
@@ -256,6 +276,10 @@ final class Updater: ObservableObject {
 
     /// Swaps the new bundle in once the app has quit, then starts it.
     private func install(staged: URL, zip: URL) {
+        guard !RecordingCoordinator.shared.isActive else {
+            phase = .failed("A recording started while the update downloaded. Finish it, then choose Update Now again.")
+            return
+        }
         let app = Bundle.main.bundleURL
         let parent = app.deletingLastPathComponent()
         guard FileManager.default.isWritableFile(atPath: parent.path) else {
@@ -266,15 +290,24 @@ final class Updater: ObservableObject {
         }
         func q(_ u: URL) -> String { "'" + u.path.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let next = app.deletingPathExtension().appendingPathExtension("app.new")
-        // The old app is only removed once the new one is fully copied; if anything fails, the download is shown.
+        let old = app.deletingPathExtension().appendingPathExtension("app.old")
+        let rescue = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].appendingPathComponent("Framecast.app")
+        // Swap by renaming, so the current app is only deleted once the new one is in place, and is put back
+        // if anything fails. On failure the new version is copied to Downloads (the update folder is cleaned later).
         let script = """
         while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 0.3; done
-        rm -rf \(q(next))
-        if ditto \(q(staged)) \(q(next)) && rm -rf \(q(app)) && mv \(q(next)) \(q(app)); then
-          open \(q(app))
-        else
-          open -R \(q(staged))
+        rm -rf \(q(next)) \(q(old))
+        if ditto \(q(staged)) \(q(next)) && mv \(q(app)) \(q(old)); then
+          if mv \(q(next)) \(q(app)); then
+            rm -rf \(q(old))
+            open \(q(app))
+            exit 0
+          fi
+          mv \(q(old)) \(q(app))
         fi
+        rm -rf \(q(next))
+        ditto \(q(staged)) \(q(rescue)) && open -R \(q(rescue))
+        open \(q(app))
         """
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -287,6 +320,20 @@ final class Updater: ObservableObject {
             return
         }
         NSApp.terminate(nil)
+    }
+
+    /// Whether this copy is signed with the release certificate (not a local development build).
+    nonisolated static var runningReleaseBuild: Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        p.arguments = ["-dr", "-", Bundle.main.bundlePath]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        return out.lowercased().contains(releaseCertificateHash)
     }
 
     static var updateFolder: URL {

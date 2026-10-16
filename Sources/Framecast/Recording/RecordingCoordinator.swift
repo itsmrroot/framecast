@@ -57,6 +57,7 @@ final class RecordingCoordinator: ObservableObject {
 
     func start() {
         guard phase == .idle else { return }
+        phase = .preparing // claimed now, so a second press can't start another recording
         Task { await startRecording() }
     }
 
@@ -65,6 +66,7 @@ final class RecordingCoordinator: ObservableObject {
         do {
             try await prepare()
         } catch {
+            await stopCaptures()
             await teardown(deleteFolder: true)
             phase = .idle
             WindowManager.shared.showHome()
@@ -86,8 +88,12 @@ final class RecordingCoordinator: ObservableObject {
         if !controlsHidden { controlBar.show(on: targetScreen ?? NSScreen.main!, coordinator: self) }
         if AppSettings.shared.highlightRecordedArea, let rect = highlightRect { AreaHighlight.shared.show(around: rect) }
         ticker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.elapsed = self?.clock?.elapsed ?? 0 }
+            Task { @MainActor in
+                self?.elapsed = self?.clock?.elapsed ?? 0
+                self?.cursor?.setIgnoredRects(RecordingCoordinator.ownWindowRects())
+            }
         }
+        cursor?.setIgnoredRects(RecordingCoordinator.ownWindowRects())
     }
 
     private func prepare() async throws {
@@ -95,8 +101,9 @@ final class RecordingCoordinator: ObservableObject {
             CGRequestScreenCaptureAccess()
             throw RecordingError.noScreenPermission
         }
-        if settings.cameraEnabled { _ = await AVCaptureDevice.requestAccess(for: .video) }
-        if settings.micEnabled { _ = await AVCaptureDevice.requestAccess(for: .audio) }
+        // A refused camera or microphone records without it instead of blocking the recording.
+        cameraAllowed = settings.cameraEnabled ? await AVCaptureDevice.requestAccess(for: .video) : false
+        micAllowed = settings.micEnabled ? await AVCaptureDevice.requestAccess(for: .audio) : false
 
         flags = []
         highlightRect = nil
@@ -128,7 +135,8 @@ final class RecordingCoordinator: ObservableObject {
                 throw RecordingError.sourceUnavailable("No display available to record.")
             }
             display = d
-            filter = SCContentFilter(display: d, excludingWindows: excluded)
+            filter = RecordingCoordinator.displayFilter(display: d, content: content, hideDesktopIcons: settings.hideDesktopIcons,
+                                                        fallbackExcluded: excluded)
             captureRect = d.frame
             sourceName = NSScreen.screen(for: d.displayID)?.localizedName ?? "Display"
             if settings.kind == .area {
@@ -136,6 +144,9 @@ final class RecordingCoordinator: ObservableObject {
                     throw RecordingError.sourceUnavailable("Select an area to record first.")
                 }
                 let clipped = area.intersection(CGRect(origin: .zero, size: d.frame.size))
+                guard !clipped.isNull, clipped.width > 10, clipped.height > 10 else {
+                    throw RecordingError.sourceUnavailable("The selected area is no longer on that display. Select an area again.")
+                }
                 sourceRect = clipped
                 captureRect = clipped.offsetBy(dx: d.frame.minX, dy: d.frame.minY)
                 sourceName = "Area of \(sourceName)"
@@ -206,10 +217,32 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     private var highlightRect: CGRect?
+    private var cameraAllowed = false
+    private var micAllowed = false
+
+    /// Frames of Framecast's visible windows (control bar, camera preview…) in global top-left points,
+    /// so clicks on them aren't recorded as clicks in the video.
+    static func ownWindowRects() -> [CGRect] {
+        guard let primary = NSScreen.screens.first else { return [] }
+        return NSApp.windows.filter { $0.isVisible && !$0.ignoresMouseEvents }.map {
+            CGRect(x: $0.frame.minX, y: primary.frame.maxY - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
+        }
+    }
+
+    /// Stops every capture that may have started (used when preparing fails part-way).
+    private func stopCaptures() async {
+        await screen?.cancel()
+        device?.cancel()
+        camMic?.cancel()
+        _ = cursor?.stop()
+        _ = keys?.stop()
+        CameraPreview.shared.hide()
+        AreaHighlight.shared.hide()
+    }
 
     private func startCameraMic(folder: URL, clock: RecordingClock) async throws {
-        let camID = settings.cameraEnabled && !settings.cameraID.isEmpty ? settings.cameraID : nil
-        let micID = settings.micEnabled && !settings.micID.isEmpty ? settings.micID : nil
+        let camID = cameraAllowed && !settings.cameraID.isEmpty ? settings.cameraID : nil
+        let micID = micAllowed && !settings.micID.isEmpty ? settings.micID : nil
         if camID != nil || micID != nil {
             let cm = try CameraMicCapture(cameraID: camID, micID: micID, folder: folder, clock: clock,
                                           cameraResolution: AppSettings.shared.cameraResolution)
@@ -240,6 +273,23 @@ final class RecordingCoordinator: ObservableObject {
                              hasSystemAudio: capture.hasAudio, sourceName: dev.localizedName, hasCursorData: false)
     }
 
+    /// Excludes all of Framecast's windows, including ones opened after recording starts (control bar,
+    /// countdown, highlight). With "Hide desktop icons", Finder is excluded too, except its normal windows.
+    static func displayFilter(display: SCDisplay, content: SCShareableContent, hideDesktopIcons: Bool,
+                              fallbackExcluded: [SCWindow]) -> SCContentFilter {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let me = content.applications.first(where: { $0.processID == pid }) else {
+            return SCContentFilter(display: display, excludingWindows: fallbackExcluded)
+        }
+        var apps = [me]
+        var keep: [SCWindow] = []
+        if hideDesktopIcons, let finder = content.applications.first(where: { $0.bundleIdentifier == "com.apple.finder" }) {
+            apps.append(finder)
+            keep = content.windows.filter { $0.owningApplication?.processID == finder.processID && $0.windowLayer >= 0 }
+        }
+        return SCContentFilter(display: display, excludingApplications: apps, exceptingWindows: keep)
+    }
+
     /// Marks this moment; flags show up on the timeline.
     func addFlag() {
         guard isRecording, let clock else { return }
@@ -261,16 +311,25 @@ final class RecordingCoordinator: ObservableObject {
         } else if phase == .paused {
             clock.resume()
             phase = .recording
+            let now = CMTime(seconds: clock.elapsed, preferredTimescale: 600)
+            screen?.refreshAfterResume(at: now)
+            device?.refreshAfterResume(at: now)
         }
     }
 
     func stop() {
         guard phase == .recording || phase == .paused else { return }
+        phase = .finishing // claimed now, so stop / cancel / restart can't overlap
         Task { await finishRecording() }
     }
 
     private func finishRecording() async {
-        guard let clock, let folder, var info else { return }
+        guard let clock, let folder, var info else {
+            await stopCaptures()
+            await teardown(deleteFolder: true)
+            phase = .idle
+            return
+        }
         phase = .finishing
         ticker?.invalidate()
         controlBar.hide()
@@ -286,6 +345,14 @@ final class RecordingCoordinator: ObservableObject {
 
         // Some devices may never deliver a frame; reflect what was actually written.
         let fm = FileManager.default
+        guard fm.fileExists(atPath: folder.appendingPathComponent(ProjectFiles.screen).path) else {
+            await teardown(deleteFolder: true)
+            phase = .idle
+            elapsed = 0
+            WindowManager.shared.showHome()
+            presentError(RecordingError.sourceUnavailable("Nothing was recorded. The source stopped sending video, so the recording was discarded."))
+            return
+        }
         info.duration = duration.seconds
         info.hasWebcam = info.hasWebcam && fm.fileExists(atPath: folder.appendingPathComponent(ProjectFiles.webcam).path)
         info.hasMic = info.hasMic && fm.fileExists(atPath: folder.appendingPathComponent(ProjectFiles.mic).path)
@@ -319,7 +386,8 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     func cancel() {
-        guard isActive else { return }
+        guard phase == .countdown || phase == .recording || phase == .paused else { return }
+        phase = .finishing
         Task {
             ticker?.invalidate()
             controlBar.hide()
@@ -340,6 +408,7 @@ final class RecordingCoordinator: ObservableObject {
 
     func restart() {
         guard isRecording else { return }
+        phase = .finishing
         Task {
             ticker?.invalidate()
             controlBar.hide()

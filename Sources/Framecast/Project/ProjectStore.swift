@@ -119,19 +119,24 @@ final class ProjectLibrary: ObservableObject {
         var result: [ProjectSummary] = []
         let interrupted = items.filter {
             $0.pathExtension == "framecast"
+                && !recoveryAttempted.contains($0.standardizedFileURL.path)
+                && !importing.contains($0.standardizedFileURL.path)
                 && !fm.fileExists(atPath: $0.appendingPathComponent(ProjectFiles.document).path)
                 && fm.fileExists(atPath: $0.appendingPathComponent(ProjectFiles.screen).path)
-                && RecordingCoordinator.shared.currentFolder != $0
+                && RecordingCoordinator.shared.currentFolder?.standardizedFileURL.path != $0.standardizedFileURL.path
                 // Another copy of Framecast may still be recording into it.
                 && Date().timeIntervalSince((try? $0.appendingPathComponent(ProjectFiles.screen)
                     .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) > 60
         }
         if !interrupted.isEmpty, !recovering {
             recovering = true
+            // Each folder is tried once per launch; an unreadable one must not trigger endless reloads.
+            for f in interrupted { recoveryAttempted.insert(f.standardizedFileURL.path) }
             Task {
-                for folder in interrupted { await ProjectLibrary.recover(folder: folder) }
+                var recovered = false
+                for folder in interrupted where await ProjectLibrary.recover(folder: folder) { recovered = true }
                 recovering = false
-                reload()
+                if recovered { reload() }
             }
         }
         for folder in items where folder.pathExtension == "framecast" {
@@ -147,15 +152,19 @@ final class ProjectLibrary: ObservableObject {
     }
 
     private var recovering = false
+    private var recoveryAttempted: Set<String> = []
+    /// Folders being filled by an import (no project.json yet), which recovery must leave alone.
+    private var importing: Set<String> = []
 
     /// Turns a recording that was interrupted (Framecast quit while recording) back into a project,
     /// using whatever was written. Recordings are written in fragments, so they're playable up to the last second.
-    static func recover(folder: URL) async {
+    @discardableResult
+    static func recover(folder: URL) async -> Bool {
         let screenURL = folder.appendingPathComponent(ProjectFiles.screen)
         let asset = AVURLAsset(url: screenURL)
         guard let duration = try? await asset.load(.duration).seconds, duration > 0.5,
               let track = try? await asset.loadTracks(withMediaType: .video).first,
-              let size = try? await track.load(.naturalSize) else { return }
+              let size = try? await track.load(.naturalSize) else { return false }
         func playable(_ name: String, _ type: AVMediaType) async -> Bool {
             let a = AVURLAsset(url: folder.appendingPathComponent(name))
             guard let d = try? await a.load(.duration).seconds, d > 0.1 else { return false }
@@ -176,6 +185,7 @@ final class ProjectLibrary: ObservableObject {
                                   clips: [Clip(start: 0, end: duration)], zooms: [], style: style)
         ProjectIO.save(doc, folder: folder)
         await Thumbnailer.writeRawThumbnail(videoURL: screenURL, to: folder.appendingPathComponent(ProjectFiles.thumbnail))
+        return true
     }
 
     func newProjectFolder() -> URL {
@@ -201,6 +211,8 @@ final class ProjectLibrary: ObservableObject {
     }
 
     func rename(_ project: ProjectSummary, to name: String) {
+        // An open editor would write its old name back on the next save.
+        WindowManager.shared.editor(for: project.folder)?.adoptName(name)
         guard var doc = try? ProjectIO.load(folder: project.folder) else { return }
         doc.name = name
         ProjectIO.save(doc, folder: project.folder)
@@ -219,6 +231,8 @@ final class ProjectLibrary: ObservableObject {
 
     func importVideo(from src: URL) async {
         let folder = newProjectFolder()
+        importing.insert(folder.standardizedFileURL.path)
+        defer { importing.remove(folder.standardizedFileURL.path) }
         let dst = folder.appendingPathComponent(ProjectFiles.screen)
         do {
             try FileManager.default.copyItem(at: src, to: dst)

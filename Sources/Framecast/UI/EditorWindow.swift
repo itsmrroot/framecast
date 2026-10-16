@@ -48,7 +48,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             // Let text fields handle their own typing.
             if window.firstResponder is NSTextView { return event }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if !mods.subtracting([.function, .numericPad]).isEmpty { return event }
+            if !mods.subtracting([.function, .numericPad, .capsLock]).isEmpty { return event }
             switch Int(event.keyCode) {
             case kVK_Space:
                 self.model.togglePlay(); return nil
@@ -224,8 +224,7 @@ private struct EditorToolbar: View {
         .background(Theme.bg)
         .confirmationDialog("Move “\(model.doc.name)” to the Trash?", isPresented: $confirmTrash) {
             Button("Move to Trash", role: .destructive) {
-                model.moveToTrash()
-                NSApp.keyWindow?.close()
+                if model.moveToTrash() { WindowManager.shared.closeEditor(folder: model.folder) }
             }
             Button("Cancel", role: .cancel) {}
         }

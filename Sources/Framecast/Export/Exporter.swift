@@ -94,10 +94,14 @@ final class Exporter: @unchecked Sendable {
     private var writer: AVAssetWriter?
     private let lock = NSLock()
     private var cancelled = false
+    /// Finishes every writer input still open. A cancelled or failed writer never asks for data again,
+    /// so waiting inputs must be finished from outside their callbacks or the export never completes.
+    private var finishOpenInputs: (() -> Void)?
 
     func cancel() {
         lock.withLock { cancelled = true }
         reader?.cancelReading()
+        lock.withLock { finishOpenInputs }?()
         writer?.cancelWriting()
     }
 
@@ -197,41 +201,43 @@ final class Exporter: @unchecked Sendable {
 
         let total = max(duration.seconds, 0.001)
         let group = DispatchGroup()
+        let inputs = [vIn] + (aIn.map { [$0] } ?? [])
+        let done = InputFinisher(count: inputs.count, group: group)
+        for _ in inputs { group.enter() }
+        // On a failure or cancel, finish every input so none waits for a callback that never comes.
+        let finishAll = { [weak reader] in
+            reader?.cancelReading()
+            for (i, input) in inputs.enumerated() { done.finish(i, input) }
+        }
+        lock.withLock { finishOpenInputs = finishAll }
 
-        group.enter()
         let vQueue = DispatchQueue(label: "framecast.export.video")
         vIn.requestMediaDataWhenReady(on: vQueue) {
-            while vIn.isReadyForMoreMediaData {
+            while vIn.isReadyForMoreMediaData && !done.isFinished(0) {
                 if let sb = vOut.copyNextSampleBuffer() {
                     if !vIn.append(sb) {
-                        reader.cancelReading()
-                        vIn.markAsFinished()
-                        group.leave()
+                        finishAll()
                         return
                     }
                     progress(min(1, sb.presentationTimeStamp.seconds / total))
                 } else {
-                    vIn.markAsFinished()
-                    group.leave()
+                    done.finish(0, vIn)
                     return
                 }
             }
         }
 
         if let aIn, let aOut {
-            group.enter()
             let aQueue = DispatchQueue(label: "framecast.export.audio")
             aIn.requestMediaDataWhenReady(on: aQueue) {
-                while aIn.isReadyForMoreMediaData {
+                while aIn.isReadyForMoreMediaData && !done.isFinished(1) {
                     if let sb = aOut.copyNextSampleBuffer() {
                         if !aIn.append(sb) {
-                            aIn.markAsFinished()
-                            group.leave()
+                            finishAll()
                             return
                         }
                     } else {
-                        aIn.markAsFinished()
-                        group.leave()
+                        done.finish(1, aIn)
                         return
                     }
                 }
@@ -241,6 +247,7 @@ final class Exporter: @unchecked Sendable {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             group.notify(queue: .global()) { cont.resume() }
         }
+        lock.withLock { finishOpenInputs = nil }
 
         if isCancelled {
             writer.cancelWriting()
@@ -250,6 +257,11 @@ final class Exporter: @unchecked Sendable {
         if reader.status == .failed {
             writer.cancelWriting()
             throw ExportError.failed(reader.error?.localizedDescription ?? "Reading failed.")
+        }
+        if writer.status == .failed {
+            let message = writer.error?.localizedDescription ?? "Writing failed."
+            try? FileManager.default.removeItem(at: url)
+            throw ExportError.failed(message)
         }
         writer.endSession(atSourceTime: duration)
         await writer.finishWriting()
@@ -293,7 +305,10 @@ final class Exporter: @unchecked Sendable {
         let ctx = FrameRenderer.shared.ciContext
         let total = max(duration.seconds, 0.001)
         while let sb = vOut.copyNextSampleBuffer() {
-            if isCancelled { break }
+            if isCancelled {
+                reader.cancelReading()
+                break
+            }
             autoreleasepool {
                 if let pb = sb.imageBuffer {
                     let ci = CIImage(cvPixelBuffer: pb)
@@ -308,7 +323,36 @@ final class Exporter: @unchecked Sendable {
             try? FileManager.default.removeItem(at: url)
             throw ExportError.cancelled
         }
+        if reader.status == .failed {
+            try? FileManager.default.removeItem(at: url)
+            throw ExportError.failed(reader.error?.localizedDescription ?? "Rendering the GIF failed.")
+        }
         guard CGImageDestinationFinalize(dest) else { throw ExportError.failed("Couldn't finalize GIF.") }
         progress(1)
+    }
+}
+
+/// Marks each writer input finished and leaves the group exactly once, whoever gets there first.
+private final class InputFinisher: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished: [Bool]
+    private let group: DispatchGroup
+
+    init(count: Int, group: DispatchGroup) {
+        finished = Array(repeating: false, count: count)
+        self.group = group
+    }
+
+    func isFinished(_ i: Int) -> Bool { lock.withLock { finished[i] } }
+
+    func finish(_ i: Int, _ input: AVAssetWriterInput) {
+        let first = lock.withLock { () -> Bool in
+            guard !finished[i] else { return false }
+            finished[i] = true
+            return true
+        }
+        guard first else { return }
+        input.markAsFinished()
+        group.leave()
     }
 }

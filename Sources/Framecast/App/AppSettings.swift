@@ -127,12 +127,20 @@ final class AppSettings: ObservableObject {
             } catch {
                 NSLog("Framecast: launch at login change failed: \(error)")
             }
+            if newValue && SMAppService.mainApp.status != .enabled {
+                // macOS wants the user to allow it in Login Items.
+                SMAppService.openSystemSettingsLoginItems()
+            }
         }
     }
 
     // MARK: Shortcuts
 
     func setShortcut(_ combo: KeyCombo?, for action: ShortcutAction) {
+        // One combo can only trigger one action.
+        if let combo {
+            for (other, c) in shortcuts where other != action && c == combo { shortcuts[other] = nil }
+        }
         shortcuts[action] = combo
         var out: [String: [Int]] = [:]
         for a in ShortcutAction.allCases {
@@ -150,9 +158,11 @@ final class AppSettings: ObservableObject {
 
     func resetAll() {
         for key in d.dictionaryRepresentation().keys where key.hasPrefix("app.") || key.hasPrefix("export.")
-            || key.hasPrefix("adv.") || key.hasPrefix("rec.") || key == "shortcuts" || key == "update.auto" {
+            || key.hasPrefix("adv.") || key.hasPrefix("rec.") || key == "shortcuts" || key == "update.auto"
+            || key == "defaultStyle" {
             d.removeObject(forKey: key)
         }
+        try? SMAppService.mainApp.unregister()
     }
 }
 
@@ -319,6 +329,12 @@ final class HotKeyCenter {
                 refs.append(ref)
             }
         }
+    }
+
+    /// Global shortcuts are paused while a new shortcut is being recorded in Settings.
+    func suspend() {
+        for r in refs { UnregisterEventHotKey(r) }
+        refs.removeAll()
     }
 
     static func perform(_ action: ShortcutAction) {

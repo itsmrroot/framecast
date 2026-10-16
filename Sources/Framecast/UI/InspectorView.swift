@@ -156,7 +156,7 @@ private struct BackgroundTab: View {
                     .fill(LinearGradient(colors: g.colors.map(\.color),
                                          startPoint: unitPoint(angle: g.angle + 180), endPoint: unitPoint(angle: g.angle)))
                     .aspectRatio(1, contentMode: .fit)
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(selected ? Color.white : Theme.border, lineWidth: selected ? 2 : 1))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 2 : 1))
                     .onTapGesture { model.edit(.render) { $0.style.background.gradientIndex = i } }
                     .help(g.name)
             }
@@ -174,7 +174,7 @@ private struct BackgroundTab: View {
                 ForEach(Backgrounds.solidColors, id: \.self) { c in
                     Circle().fill(c.color)
                         .aspectRatio(1, contentMode: .fit)
-                        .overlay(Circle().strokeBorder(bg.solid == c ? Color.white : Theme.border, lineWidth: bg.solid == c ? 2 : 1))
+                        .overlay(Circle().strokeBorder(bg.solid == c ? Theme.accent : Theme.border, lineWidth: bg.solid == c ? 2 : 1))
                         .onTapGesture { model.edit(.render) { $0.style.background.solid = c } }
                 }
             }
@@ -222,7 +222,7 @@ private struct WallpaperThumb: View {
         }
         .aspectRatio(16.0 / 10.0, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Color.white : Theme.border, lineWidth: selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
         .task(id: path) {
             let p = path
@@ -754,7 +754,6 @@ private struct CaptionsTab: View {
     @State private var working = false
     @State private var progress = 0.0
     @State private var error: String?
-    @State private var task: Task<Void, Never>?
 
     private var hasAudio: Bool { model.doc.info.hasMic || model.doc.info.hasSystemAudio }
 
@@ -781,7 +780,7 @@ private struct CaptionsTab: View {
                     HStack {
                         Text("Transcribing… \(Int(progress * 100))%").font(.system(size: 11)).foregroundStyle(Theme.textDim)
                         Spacer()
-                        Button("Cancel") { task?.cancel() }.buttonStyle(SecondaryButtonStyle())
+                        Button("Cancel") { model.captionTask?.cancel() }.buttonStyle(SecondaryButtonStyle())
                     }
                 } else {
                     Button {
@@ -834,11 +833,14 @@ private struct CaptionsTab: View {
         working = true
         progress = 0
         let folder = model.folder, info = model.doc.info, loc = locale
-        task = Task {
+        model.captionTask?.cancel()
+        let model = self.model
+        model.captionTask = Task {
             do {
                 let cues = try await Transcriber.transcribe(folder: folder, info: info, locale: loc) { p in
                     DispatchQueue.main.async { progress = p }
                 }
+                guard !Task.isCancelled, !model.isTrashed else { return }
                 if cues.isEmpty { error = "No speech was found in the audio." } else { model.setCaptions(cues) }
             } catch is CancellationError {
             } catch {

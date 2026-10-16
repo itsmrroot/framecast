@@ -137,8 +137,11 @@ enum ClipOps {
             var pieces: [Clip] = []
             var cursor = clip.start
             for (a, b) in ranges.sorted(by: { $0.0 < $1.0 }) {
-                let s = max(a, clip.start), e = min(b, clip.end)
+                var s = max(a, clip.start), e = min(b, clip.end)
                 guard e - s > 0.2 else { continue }
+                // Never leave slivers of footage behind: absorb tiny gaps into the range.
+                if s - cursor <= 0.05 { s = cursor }
+                if clip.end - e <= 0.05 { e = clip.end }
                 if s - cursor > 0.05 {
                     var before = clip
                     before.id = pieces.isEmpty ? clip.id : UUID()

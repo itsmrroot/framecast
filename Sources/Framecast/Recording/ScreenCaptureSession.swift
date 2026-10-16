@@ -15,6 +15,8 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
     private var sessionStarted = false
     private var lastFrame: CMSampleBuffer?
     private var lastFrameTime: CMTime = .invalid
+    private var audioOrder = AudioOrderGuard()
+    private var reportedFailure = false
     private(set) var framesWritten = 0
 
     var onError: ((Error) -> Void)?
@@ -75,6 +77,16 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
         guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         try await stream.startCapture()
         self.stream = stream
+    }
+
+    /// Call right after resuming. ScreenCaptureKit only sends frames when the screen changes, so write the
+    /// latest frame now; otherwise the video would show the pre-pause screen until something moved.
+    func refreshAfterResume(at time: CMTime) {
+        queue.async { [self] in
+            guard sessionStarted, let last = lastFrame, !lastFrameTime.isValid || time > lastFrameTime,
+                  let b = SampleRetimer.stamped(last, at: time) else { return }
+            appendVideo(b, time: time)
+        }
     }
 
     /// Call right after `clock.begin()`. Writes the most recent frame at t = 0 so the video never starts blank.
@@ -159,6 +171,8 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
         if videoInput.append(sb) {
             lastFrameTime = time
             framesWritten += 1
+        } else {
+            reportWriterFailure()
         }
     }
 
@@ -166,7 +180,16 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
         guard sessionStarted, let input = audioInput,
               let offset = clock.offset(forHostTime: sb.presentationTimeStamp),
               let b = SampleRetimer.shifted(sb, by: offset),
-              input.isReadyForMoreMediaData else { return }
-        input.append(b)
+              input.isReadyForMoreMediaData, audioOrder.accept(b) else { return }
+        if !input.append(b) { reportWriterFailure() }
+    }
+
+    /// A failed writer drops everything after it; stop the recording so what was written is kept.
+    private func reportWriterFailure() {
+        guard writer.status == .failed, !reportedFailure else { return }
+        reportedFailure = true
+        let error = writer.error ?? CocoaError(.fileWriteUnknown)
+        NSLog("Framecast: screen writer failed: \(error)")
+        onError?(error)
     }
 }

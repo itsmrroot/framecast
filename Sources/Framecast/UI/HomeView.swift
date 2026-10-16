@@ -472,6 +472,7 @@ private struct ProjectCard: View {
                 Text(formatTime(project.duration))
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .padding(.horizontal, 6).padding(.vertical, 3)
+                    .foregroundStyle(.white)
                     .background(Capsule().fill(Color.black.opacity(0.65)))
                     .padding(8)
             }
