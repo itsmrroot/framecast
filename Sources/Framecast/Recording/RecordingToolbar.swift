@@ -232,6 +232,7 @@ struct RecordingToolbarView: View {
                          title: settings.systemAudio ? "System audio" : "No system audio", on: settings.systemAudio)
                 }
                 .buttonStyle(.plain)
+                .hoverHighlight()
                 .help("Record the sound your Mac plays")
             }
             .padding(.horizontal, 10)
@@ -245,9 +246,10 @@ struct RecordingToolbarView: View {
                 Image(systemName: "folder")
                     .font(.system(size: 17))
                     .frame(width: 46, height: 42)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverHighlight(resting: 0.06)
             .help("Open Framecast: your recordings and settings")
             .padding(.leading, 12)
 
@@ -281,10 +283,12 @@ struct RecordingToolbarView: View {
                 }
                 .font(.system(size: 17))
                 .frame(width: 54, height: 42)
+                .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .hoverHighlight()
             .padding(.horizontal, 10)
         }
         .foregroundStyle(Theme.text)
@@ -344,7 +348,26 @@ struct RecordingToolbarView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .hoverHighlight()
     }
+}
+
+/// A soft rounded highlight behind a toolbar item while the pointer is over it.
+private struct HoverHighlight: ViewModifier {
+    var resting: Double = 0
+    @State private var hover = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(hover ? max(resting, 0) + 0.1 : resting)))
+            .animation(.easeOut(duration: 0.12), value: hover)
+            .onHover { hover = $0 }
+    }
+}
+
+private extension View {
+    func hoverHighlight(resting: Double = 0) -> some View { modifier(HoverHighlight(resting: resting)) }
 }
 
 private struct ToolbarSourceButton: View {

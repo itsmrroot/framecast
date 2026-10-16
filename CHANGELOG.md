@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.4
+
+- Recording toolbar: camera, microphone, system audio, folder and ⚙ now light up when you point at them
+
 ## 1.3.3
 
 - Framecast now opens straight to the recording toolbar, ready to record. Prefer the home window? Settings → General → When Framecast opens
