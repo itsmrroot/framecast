@@ -1,90 +1,164 @@
+<div align="center">
+
+<img src="docs/icon.png" width="128" height="128" alt="Framecast icon">
+
 # Framecast
 
-A native macOS screen recorder inspired by Screen Studio. Record your screen, and Framecast turns it into a polished video automatically: smooth zooms on your clicks, a crisp animated cursor, a nice background with padding and shadow, and an optional webcam bubble.
+**Beautiful screen recordings for macOS, with zero editing.**
 
-Built with Swift, SwiftUI, ScreenCaptureKit, AVFoundation and Core Image (Metal). Requires macOS 15 or later.
+Record your screen and Framecast turns it into a polished video: smooth zooms on your clicks,
+a crisp animated cursor, a stylish background and an optional webcam bubble.
 
-## Build & run
+[![Latest release](https://img.shields.io/github/v/release/itsmrroot/framecast?style=flat-square&color=5b5bf7)](https://github.com/itsmrroot/framecast/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/itsmrroot/framecast/release.yml?style=flat-square&label=build)](https://github.com/itsmrroot/framecast/actions/workflows/release.yml)
+![macOS 15+](https://img.shields.io/badge/macOS-15%2B-000000?style=flat-square&logo=apple)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)
+![Apple Silicon & Intel](https://img.shields.io/badge/Apple%20Silicon%20%26%20Intel-supported-2ea44f?style=flat-square)
 
-```bash
-scripts/build-app.sh          # builds build/Framecast.app (release)
-open build/Framecast.app
-```
+[**Download**](https://github.com/itsmrroot/framecast/releases/latest) · [Features](#-features) · [Build from source](#-build-from-source) · [Architecture](#-architecture)
 
-On first use, macOS asks for **Screen & System Audio Recording** permission (plus Camera and Microphone if you turn them on). After granting screen recording, quit and reopen Framecast.
+</div>
 
-The build script signs with your Apple Development identity when one is installed, so permissions survive rebuilds. Recordings are stored in `~/Movies/Framecast`.
+---
 
-> Without full Xcode installed, the script builds against the macOS 26 SDK from the Command Line Tools. The macOS 27 SDK's SwiftUI needs Xcode's macro plugins.
+## ✨ Highlights
 
-## Features
+- 🎯 **Automatic zoom.** Click clusters become smooth zooms, and the camera follows your cursor.
+- 🖱️ **Cursor as data.** Position, clicks and cursor shape are recorded separately, so you can restyle the cursor after recording.
+- 🎨 **Instant polish.** Wallpapers, gradients, padding, rounded corners and shadows, with no keyframes to set.
+- 📸 **Webcam bubble.** Circle, rounded or square, and it shrinks out of the way while zoomed in.
+- ⚡ **Native and fast.** Built with ScreenCaptureKit, AVFoundation and Core Image on Metal. The preview and the export use the same renderer, so what you see is what you get.
 
-**Recording**
+## 📥 Install
+
+1. Download the zip for your Mac from the [**latest release**](https://github.com/itsmrroot/framecast/releases/latest):
+
+   | Your Mac | File |
+   | --- | --- |
+   | Apple Silicon (M1 and later) | `Framecast-x.y.z-macOS-arm64.zip` |
+   | Intel | `Framecast-x.y.z-macOS-x86_64.zip` |
+
+   Not sure which you have? Open  → **About This Mac** and look at **Chip** or **Processor**.
+
+2. Unzip it and move **Framecast.app** into **Applications**.
+3. Releases are not notarized yet, so macOS will block the first launch. Right-click the app and choose **Open**, or run:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Framecast.app
+   ```
+
+4. Allow **Screen & System Audio Recording** when asked, then quit and reopen Framecast. Camera and Microphone access are only requested if you turn them on.
+
+Recordings are saved to `~/Movies/Framecast`.
+
+## 🚀 Features
+
+<details open>
+<summary><b>🎬 Recording</b></summary>
+
 - Record a full display, a single window (with a thumbnail picker), or a dragged area
 - System audio, microphone and webcam, each saved to its own file and kept in sync
-- 3 s or 5 s countdown, pause/resume, restart, cancel
-- Floating control bar and a menu bar timer, both hidden from the recording
-- Global shortcut **⌘⇧2** to start or stop from anywhere
+- 3 s or 5 s countdown, pause and resume, restart, cancel
+- Floating control bar and menu bar timer, both hidden from the recording
+- Global shortcut <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>2</kbd> to start or stop from anywhere
 - Option to hide desktop icons
 - 30 or 60 fps HEVC capture at native Retina resolution
-- The cursor is recorded as data (position, clicks, cursor shape), not burned into the video, so it can be restyled later
 
-**Editor**
-- Automatic zoom generated from click clusters, with smooth log-space easing
-- The camera follows the cursor using a dead zone and spring damping
-- Manual zooms: click the zoom lane to add one, drag to move, drag the edges to resize; set the level and choose between following the cursor and a fixed focus point
-- Smoothed cursor, size control, high-res vector arrow, motion blur, ripple/ring click effects, a press animation, and hide-when-idle
-- Backgrounds: macOS wallpapers, 16 gradients, solid colours, or your own image, with optional blur
-- Padding, rounded corners, shadow strength and softness
-- Aspect ratios: Auto, 16:9, 4:3, 1:1, 9:16, 3:4
-- Webcam bubble: circle, rounded or square; four positions; size; mirror; border; shrinks while zoomed
-- Timeline: filmstrip, split (S), cut, trim by dragging clip edges, per-clip speed from 0.5× to 8× with pitch preserved
-- Volume for system audio and microphone
-- Undo/redo, style presets, a default style for new recordings
+</details>
+
+<details open>
+<summary><b>✂️ Editor</b></summary>
+
+- **Zoom:** generated automatically from click clusters with smooth log-space easing. Add your own by clicking the zoom lane, then drag to move or resize it. Set the zoom level, and choose whether it follows the cursor or stays on a fixed point.
+- **Camera:** follows the cursor using a dead zone and spring damping
+- **Cursor:** smoothing, size, high-res vector arrow, motion blur, ripple or ring click effects, a press animation, hide when idle
+- **Background:** macOS wallpapers, 16 gradients, solid colours or your own image, with optional blur
+- **Frame:** padding, rounded corners, shadow strength and softness
+- **Aspect ratio:** Auto, 16:9, 4:3, 1:1, 9:16, 3:4
+- **Webcam:** circle, rounded or square shape, four positions, size, mirror, border
+- **Timeline:** filmstrip, split, cut, trim by dragging clip edges, per-clip speed from 0.5× to 8× with pitch preserved
+- **Audio:** separate volume for system audio and microphone
+- Undo and redo, style presets, a default style for new recordings
 - Import existing videos and edit them the same way
 
-**Export**
-- MP4 in H.264 or HEVC, 720p / 1080p / 1440p / 4K, at 24/30/60 fps, three quality levels
-- Animated GIF
-- Show in Finder, copy to clipboard (paste straight into Slack, Mail and similar apps), or open
+</details>
 
-## Editor shortcuts
+<details open>
+<summary><b>📤 Export</b></summary>
+
+- MP4 in H.264 or HEVC: 720p, 1080p, 1440p or 4K, at 24, 30 or 60 fps, with three quality levels
+- Animated GIF
+- Show in Finder, open, or copy to the clipboard and paste straight into Slack, Mail and similar apps
+
+</details>
+
+## ⌨️ Editor shortcuts
 
 | Key | Action |
 | --- | --- |
-| Space | Play / pause |
-| S | Split clip at playhead |
-| Z | Add zoom at playhead |
-| ⌫ | Delete selected zoom, or cut the selected clip |
-| ← / → | Step one frame |
-| ⌘Z / ⇧⌘Z | Undo / redo |
-| ⌘E | Export |
+| <kbd>Space</kbd> | Play / pause |
+| <kbd>S</kbd> | Split clip at playhead |
+| <kbd>Z</kbd> | Add zoom at playhead |
+| <kbd>⌫</kbd> | Delete selected zoom, or cut selected clip |
+| <kbd>←</kbd> <kbd>→</kbd> | Step one frame |
+| <kbd>⌘</kbd> <kbd>Z</kbd> / <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>Z</kbd> | Undo / redo |
+| <kbd>⌘</kbd> <kbd>E</kbd> | Export |
 
-## Architecture
+## 🛠 Build from source
+
+Requires macOS 15 or later and Xcode (or the Command Line Tools).
+
+```bash
+git clone https://github.com/itsmrroot/framecast.git
+cd framecast
+scripts/build-app.sh            # builds build/Framecast.app (release)
+open build/Framecast.app
+```
+
+| Option | Example |
+| --- | --- |
+| Debug build | `scripts/build-app.sh debug` |
+| Build for a specific chip | `ARCH=x86_64 scripts/build-app.sh` |
+| Sign with a specific identity | `CODESIGN_IDENTITY="Apple Development: …" scripts/build-app.sh` |
+
+The script signs with your Apple Development identity when one is installed, so macOS keeps your privacy permissions between rebuilds.
+
+> [!NOTE]
+> Without full Xcode installed, the script builds against the macOS 26 SDK from the Command Line Tools. SwiftUI in the macOS 27 SDK needs Xcode's macro plugins.
+
+### Releasing
+
+Push a version tag. GitHub Actions builds the app for Apple Silicon and Intel and publishes both zips to a new release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+## 🧱 Architecture
 
 ```
 Sources/Framecast/
-  App/        App entry, window management, menu bar, headless self-tests
-  Recording/  ScreenCaptureKit capture, camera/mic capture, cursor recorder,
-              shared RecordingClock (aligns every stream at t=0, removes pauses),
-              countdown / area selection / control bar overlays, global hotkey
-  Project/    Codable project model, library, presets, EditMap (source ↔ edited time),
-              auto-zoom generator
-  Render/     CursorPath (spring-smoothed), CameraPath (zoom + follow),
-              RenderModel (immutable render snapshot), FrameRenderer (Core Image compositor),
-              AVFoundation custom video compositor + composition builder
-  Export/     MP4 (AVAssetReader → AVAssetWriter) and GIF export
-  UI/         SwiftUI home screen, editor, timeline, inspector, export sheet
+├── App/        App entry, window management, menu bar, headless self-tests
+├── Recording/  ScreenCaptureKit capture, camera/mic capture, cursor recorder,
+│               shared RecordingClock (aligns every stream at t=0, removes pauses),
+│               countdown / area selection / control bar overlays, global hotkey
+├── Project/    Codable project model, library, presets,
+│               EditMap (source ↔ edited time), auto-zoom generator
+├── Render/     CursorPath (spring-smoothed), CameraPath (zoom + follow),
+│               RenderModel (immutable render snapshot), FrameRenderer (Core Image),
+│               AVFoundation custom video compositor + composition builder
+├── Export/     MP4 (AVAssetReader → AVAssetWriter) and GIF export
+└── UI/         SwiftUI home screen, editor, timeline, inspector, export sheet
 ```
 
-The same custom `AVVideoCompositing` compositor renders both the live preview (through `AVPlayer`) and the export, so what you see is exactly what you get. Cuts and speed changes are applied with an `AVMutableComposition`. Zooms, cursor effects and styling are drawn per frame by `FrameRenderer`, which works in output pixels, so effects stay sharp at any zoom level.
+- **One renderer.** The same custom `AVVideoCompositing` compositor drives the live preview (through `AVPlayer`) and the export.
+- **Non-destructive edits.** Cuts and speed changes are applied with an `AVMutableComposition`. Zooms, cursor effects and styling are drawn per frame by `FrameRenderer` in output pixels, so they stay sharp at any zoom level.
+- **Simple projects.** A project is a `*.framecast` folder containing `screen.mov`, `webcam.mov`, `mic.m4a`, `cursor.json`, the cursor images, and `project.json` with the edits and style.
 
-A project is a folder (`*.framecast`) containing `screen.mov`, `webcam.mov`, `mic.m4a`, `cursor.json`, the cursor images, and `project.json` holding the edits and style.
-
-## Self-tests
+## 🧪 Self-tests
 
 ```bash
-# Render pipeline: builds a project from any video with simulated cursor/clicks, exports MP4 + GIF
+# Render pipeline: builds a project from any video with simulated cursor and clicks, exports MP4 + GIF
 build/Framecast.app/Contents/MacOS/Framecast --selftest <video.mov> <outDir>
 
 # Capture pipeline: records the main display for N seconds (with a pause), then exports
@@ -93,3 +167,9 @@ build/Framecast.app/Contents/MacOS/Framecast --recordtest 3 <outDir>
 # Open a project folder directly in the editor
 open build/Framecast.app --args --open <folder.framecast>
 ```
+
+---
+
+<div align="center">
+<sub>Inspired by Screen Studio · Made with Swift for macOS</sub>
+</div>
