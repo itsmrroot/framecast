@@ -46,4 +46,7 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 IDENTITY="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')}"
 xattr -cr "$APP"
 codesign --force --deep --sign "${IDENTITY:--}" "$APP"
+# Keep development builds out of Launchpad and Spotlight, so only the installed copy shows up there.
+touch build.nosync/.metadata_never_index
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$PWD/$APP" 2>/dev/null || true
 echo "Built build/Framecast.app (signed with: ${IDENTITY:-ad-hoc})"

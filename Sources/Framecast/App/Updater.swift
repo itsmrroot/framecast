@@ -88,6 +88,8 @@ final class Updater: ObservableObject {
 
     /// Quiet check at launch: only shows something if there is an update.
     func checkOnLaunch() {
+        // Whatever an earlier update left behind (the new version is running now).
+        try? FileManager.default.removeItem(at: Self.updateFolder)
         guard autoCheck else { return }
         Task { await check(manual: false) }
     }
