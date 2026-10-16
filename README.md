@@ -153,7 +153,7 @@ The script signs with your Apple Development identity when one is installed, so 
 
 ### Releasing
 
-Push a version tag. GitHub Actions builds the app for Apple Silicon and Intel and publishes a DMG installer for each (plus the zips the in-app updater uses) to a new release:
+Add a section for the new version to [CHANGELOG.md](CHANGELOG.md) (it becomes the release's "What's new", which the in-app updater shows), then push a version tag. GitHub Actions builds the app for Apple Silicon and Intel and publishes a DMG installer for each (plus the zips the in-app updater uses) to a new release:
 
 ```bash
 git tag v1.0.0 && git push origin v1.0.0

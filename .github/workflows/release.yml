@@ -110,28 +110,36 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          path: src
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # "What's new" comes from this version's section in CHANGELOG.md (the in-app updater shows it).
+          NEWS="$(awk -v v="## $VERSION" '$0 == v {on=1; next} /^## / {if (on) exit} on' src/CHANGELOG.md | sed '/./,$!d')"
+          [[ -n "$NEWS" ]] || NEWS="- Bug fixes and improvements"
+          {
+            echo "## What's new"
+            echo "$NEWS"
+            echo
+            echo "## Install"
+            echo "Download the installer for your Mac, open it, and drag **Framecast** into **Applications**:"
+            echo '- **Apple Silicon (M1 and later):** `Framecast-'"$VERSION"'-Apple-Silicon.dmg`'
+            echo '- **Intel:** `Framecast-'"$VERSION"'-Intel.dmg`'
+            echo
+            echo "Requires macOS 15 or later. This build is not notarized, so macOS blocks the first launch: right-click Framecast in Applications and choose **Open**."
+            echo
+            echo "Already have Framecast? It updates itself: **Framecast → Check for Updates…** (the \`update\` zips are what it downloads)."
+          } > notes.md
           PRERELEASE=""
           [[ "$GITHUB_REF_NAME" == *-* ]] && PRERELEASE="--prerelease"
           gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip $PRERELEASE \
             --repo "$GITHUB_REPOSITORY" \
             --title "Framecast ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            --notes "$(cat <<'EOF'
-          ## Install
-          Download the installer for your Mac, open it, and drag **Framecast** into **Applications**:
-          - **Apple Silicon (M1 and later):** `Framecast-*-Apple-Silicon.dmg`
-          - **Intel:** `Framecast-*-Intel.dmg`
-
-          Requires macOS 15 or later. Not sure which Mac you have? Open  → About This Mac.
-
-          This build is not notarized, so macOS blocks the first launch: right-click Framecast in Applications
-          and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/Framecast.app`.
-
-          Already have Framecast? It updates itself: **Framecast → Check for Updates…**
-          (The `update` zips are what the in-app updater downloads; you don't need them.)
-          EOF
-          )"
+            --notes-file notes.md

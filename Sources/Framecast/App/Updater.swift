@@ -86,6 +86,20 @@ final class Updater: ObservableObject {
         return isPrerelease(current) && !isPrerelease(candidate)
     }
 
+    /// The "What's new" part of the release notes (the install instructions are for new downloads).
+    static func whatsNew(from notes: String) -> String {
+        let lines = notes.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let isHeading = { (l: String) in l.hasPrefix("#") }
+        if let start = lines.firstIndex(where: { isHeading($0) && $0.lowercased().contains("what's new") }) {
+            let rest = lines[(start + 1)...]
+            let end = rest.firstIndex(where: isHeading) ?? lines.endIndex
+            return lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // Older releases have no "What's new" section; they only describe installing.
+        if lines.contains(where: { isHeading($0) && $0.lowercased().contains("install") }) { return "" }
+        return notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func isPrerelease(_ v: String) -> Bool {
         v.trimmingCharacters(in: .whitespaces).contains("-")
     }
@@ -403,19 +417,17 @@ struct UpdateView: View {
         if let release = updater.release {
             Text("Framecast \(release.version) is available. You have version \(Updater.currentVersion).")
                 .font(.system(size: 12.5))
-            if !release.notes.isEmpty {
+            let news = Updater.whatsNew(from: release.notes)
+            if !news.isEmpty {
                 ScrollView {
-                    Text(release.notes)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textDim)
+                    ReleaseNotesView(markdown: news)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
                 }
-                .frame(maxHeight: 140)
-                .padding(10)
+                .frame(maxHeight: 180)
+                .padding(12)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.05)))
             }
-            Link(destination: release.page) { Label("What's new", systemImage: "list.bullet") }
+            Link(destination: release.page) { Label("View release on GitHub", systemImage: "arrow.up.right.square") }
                 .font(.system(size: 12))
 
             switch updater.phase {
@@ -498,5 +510,38 @@ struct UpdateBadge: View {
             .buttonStyle(.plain)
             .help("A new version of Framecast is available")
         }
+    }
+}
+
+/// Renders simple Markdown release notes: headings, bullet lists and inline **bold** / `code` / links.
+struct ReleaseNotesView: View {
+    let markdown: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(markdown.components(separatedBy: "\n").enumerated()), id: \.offset) { _, raw in
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if line.hasPrefix("#") {
+                    Text(inline(line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .padding(.top, 4)
+                } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Circle().fill(Theme.accent).frame(width: 5, height: 5).offset(y: -2)
+                        Text(inline(String(line.dropFirst(2))))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if !line.isEmpty {
+                    Text(inline(line)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.text)
+        .textSelection(.enabled)
+    }
+
+    private func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
     }
 }
