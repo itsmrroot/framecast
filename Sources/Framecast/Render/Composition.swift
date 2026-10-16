@@ -70,6 +70,9 @@ final class FrameCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
 struct ProjectAssets {
     let screenAsset: AVURLAsset
+    // Tracks only weakly reference their asset, so the assets must stay alive while their tracks are used.
+    let micAsset: AVURLAsset?
+    let webcamAsset: AVURLAsset?
     let screenVideo: AVAssetTrack
     let systemAudio: AVAssetTrack?
     let mic: AVAssetTrack?
@@ -88,23 +91,27 @@ struct ProjectAssets {
         let systemAudio = try await screenAsset.loadTracks(withMediaType: .audio).first
 
         var mic: AVAssetTrack?
+        var micAsset: AVURLAsset?
         var micDuration = 0.0
         let micURL = folder.appendingPathComponent(ProjectFiles.mic)
         if FileManager.default.fileExists(atPath: micURL.path) {
             let a = AVURLAsset(url: micURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             mic = try? await a.loadTracks(withMediaType: .audio).first
             micDuration = (try? await a.load(.duration).seconds) ?? 0
+            micAsset = a
         }
 
         var webcam: AVAssetTrack?
+        var webcamAsset: AVURLAsset?
         var webcamDuration = 0.0
         let camURL = folder.appendingPathComponent(ProjectFiles.webcam)
         if FileManager.default.fileExists(atPath: camURL.path) {
             let a = AVURLAsset(url: camURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             webcam = try? await a.loadTracks(withMediaType: .video).first
             webcamDuration = (try? await a.load(.duration).seconds) ?? 0
+            webcamAsset = a
         }
-        return ProjectAssets(screenAsset: screenAsset, screenVideo: video, systemAudio: systemAudio, mic: mic,
+        return ProjectAssets(screenAsset: screenAsset, micAsset: micAsset, webcamAsset: webcamAsset, screenVideo: video, systemAudio: systemAudio, mic: mic,
                              webcam: webcam, screenDuration: screenDuration, micDuration: micDuration,
                              webcamDuration: webcamDuration)
     }
