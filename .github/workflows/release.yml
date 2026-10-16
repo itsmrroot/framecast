@@ -39,13 +39,39 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
 
+      # A stable signing identity lets macOS keep Screen Recording, Camera and Accessibility
+      # permissions across updates. Without the secrets, builds are signed ad hoc.
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+        run: |
+          if [[ -z "$P12" ]]; then
+            echo "CODESIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "::warning::No signing certificate configured; signing ad hoc."
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PW="$(openssl rand -hex 16)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          HASH="$(security find-identity -p codesigning "$KC" | awk '/Framecast Release Signing/ {print $2; exit}')"
+          [[ -n "$HASH" ]] || { echo "::error::Signing identity not found in the certificate."; exit 1; }
+          echo "CODESIGN_IDENTITY=$HASH" >> "$GITHUB_ENV"
+
       - name: Build app
         env:
           ARCH: ${{ matrix.arch }}
-          CODESIGN_IDENTITY: "-"
         run: |
           scripts/build-app.sh release
           lipo -archs build/Framecast.app/Contents/MacOS/Framecast
+          codesign -dr - build/Framecast.app
 
       - name: Package
         run: |
@@ -87,5 +113,7 @@ jobs:
 
           This build is not notarized. After unzipping and moving Framecast to Applications, open it once with
           right-click → Open, or run: `xattr -dr com.apple.quarantine /Applications/Framecast.app`
+
+          Already have Framecast? It updates itself: **Framecast → Check for Updates…**
           EOF
           )"

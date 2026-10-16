@@ -47,6 +47,7 @@ private struct RecordPanel: View {
                 .frame(width: 28, height: 28)
                 Text("Framecast").font(.system(size: 17, weight: .bold))
                 Spacer()
+                UpdateBadge()
             }
             .padding(.top, 38)
             .padding(.horizontal, 20)
@@ -472,6 +473,7 @@ private struct ProjectCard: View {
 
 struct SettingsView: View {
     @ObservedObject private var presets = PresetStore.shared
+    @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         Form {
@@ -480,7 +482,20 @@ struct SettingsView: View {
                 LabeledContent("Play / pause in editor", value: "Space")
                 LabeledContent("Split at playhead", value: "S")
                 LabeledContent("Add zoom at playhead", value: "Z")
+                LabeledContent("Add blur / title at playhead", value: "B / T")
                 LabeledContent("Delete selection", value: "⌫")
+            }
+            Section("Updates") {
+                Toggle("Check for new versions automatically", isOn: $updater.autoCheck)
+                LabeledContent("Version", value: Updater.currentVersion)
+                HStack {
+                    Button("Check Now") { Task { await updater.check(manual: true) } }
+                    if updater.phase == .checking { ProgressView().controlSize(.small) }
+                    if updater.phase == .upToDate { Text("You have the latest version.").foregroundStyle(.secondary) }
+                    if let r = updater.release {
+                        Button("Version \(r.version) is available") { updater.showWindow() }.buttonStyle(.link)
+                    }
+                }
             }
             Section("Storage") {
                 LabeledContent("Recordings folder", value: ProjectLibrary.shared.root.path)
@@ -501,6 +516,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 460)
+        .frame(width: 480, height: 560)
     }
 }

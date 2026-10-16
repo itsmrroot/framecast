@@ -24,6 +24,9 @@ struct FramecastApp: App {
             SettingsView()
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Recording") { RecordingCoordinator.shared.toggleRecording() }
                 Button("Show Recordings") { WindowManager.shared.showHome() }
@@ -72,6 +75,7 @@ struct MenuBarContent: View {
         }
         Divider()
         Button("Open Framecast") { WindowManager.shared.showHome() }
+        Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
         Divider()
         Button("Quit Framecast") { NSApp.terminate(nil) }
     }
@@ -79,6 +83,28 @@ struct MenuBarContent: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--updatecheck") {
+            Task { @MainActor in
+                do {
+                    let r = try await Updater.fetchLatest()
+                    print("current \(Updater.currentVersion), suffix \(Updater.assetSuffix)")
+                    print(r.map { "newer: \($0.version) asset: \($0.asset?.name ?? "none") sha256: \($0.asset?.sha256 ?? "none")" } ?? "up to date")
+                    // End-to-end test: download, verify and replace this copy of the app.
+                    guard r != nil, CommandLine.arguments.contains("--install") else { exit(0) }
+                    let updater = Updater.shared
+                    await updater.check(manual: false)
+                    updater.updateNow()
+                    while true {
+                        try await Task.sleep(nanoseconds: 500_000_000)
+                        if case .failed(let msg) = updater.phase { print("install failed: \(msg)"); exit(1) }
+                    }
+                } catch {
+                    print("check failed: \(error)")
+                    exit(1)
+                }
+            }
+            return
+        }
         if CommandLine.arguments.contains("--selftest") || CommandLine.arguments.contains("--recordtest") {
             SelfTest.runIfRequested()
             return
@@ -89,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RecordingCoordinator.shared.toggleRecording()
         }
         WindowManager.shared.showHome()
+        Updater.shared.checkOnLaunch()
         if let i = CommandLine.arguments.firstIndex(of: "--open"), CommandLine.arguments.count > i + 1 {
             WindowManager.shared.openEditor(folder: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
         }
