@@ -1,5 +1,6 @@
 #!/bin/bash
 # Builds Framecast.app into ./build. Usage: scripts/build-app.sh [debug|release]
+# Set ARCH=arm64 or ARCH=x86_64 to build for a specific architecture (default: the host's).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -7,9 +8,10 @@ CONFIG="${1:-release}"
 APP="build/Framecast.app"
 # SwiftUI in the macOS 27 SDK needs Xcode's macro plugins; the 26 SDK builds with just the Command Line Tools.
 SDK_ARGS=()
+if [ -n "${ARCH:-}" ]; then SDK_ARGS+=(--arch "$ARCH"); fi
 if ! xcodebuild -version >/dev/null 2>&1; then
   for sdk in /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.sdk; do
-    if [ -d "$sdk" ]; then SDK_ARGS=(--sdk "$sdk"); break; fi
+    if [ -d "$sdk" ]; then SDK_ARGS+=(--sdk "$sdk"); break; fi
   done
 fi
 

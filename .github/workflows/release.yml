@@ -1,0 +1,91 @@
+name: Release
+
+# Push a tag like v1.0.0 to build Framecast for Apple Silicon and Intel and publish a GitHub release.
+# Run it manually from the Actions tab to build both zips without publishing a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|rc' | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+
+      - name: Set version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0-dev"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
+
+      - name: Build app
+        env:
+          ARCH: ${{ matrix.arch }}
+          CODESIGN_IDENTITY: "-"
+        run: |
+          scripts/build-app.sh release
+          lipo -archs build/Framecast.app/Contents/MacOS/Framecast
+
+      - name: Package
+        run: |
+          ZIP="Framecast-${VERSION}-macOS-${{ matrix.arch }}.zip"
+          ditto -c -k --keepParent build/Framecast.app "$ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Framecast-${{ matrix.arch }}
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Framecast ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "$(cat <<'EOF'
+          ## Download
+          - **Apple Silicon (M1 and later):** `Framecast-*-macOS-arm64.zip`
+          - **Intel:** `Framecast-*-macOS-x86_64.zip`
+
+          Requires macOS 15 or later.
+
+          This build is not notarized. After unzipping and moving Framecast to Applications, open it once with
+          right-click → Open, or run: `xattr -dr com.apple.quarantine /Applications/Framecast.app`
+          EOF
+          )"
