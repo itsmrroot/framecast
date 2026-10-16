@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- Six new wallpaper categories drawn by Framecast: Aurora, Waves, Glass, Radiant, Midnight and Mesh (8 each, created the first time you open them)
+- "Pick random wallpaper" picks from the category you're viewing
+- The home screen header no longer wraps when an update is available
+
 ## 1.3.1
 
 - Timeline blocks are lit like real objects: glowing gold clips, vivid indigo zooms and gradient effect blocks, with centred labels

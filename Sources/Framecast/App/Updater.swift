@@ -501,14 +501,16 @@ struct UpdateBadge: View {
             Button {
                 updater.showWindow()
             } label: {
-                Label("Update to \(release.version)", systemImage: "arrow.down.circle.fill")
+                Label("Update", systemImage: "arrow.down.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize()
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Capsule().fill(Theme.accent))
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .help("A new version of Framecast is available")
+            .help("Framecast \(release.version) is available. Click to update.")
         }
     }
 }

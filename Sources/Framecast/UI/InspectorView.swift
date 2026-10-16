@@ -85,15 +85,19 @@ struct InspectorView: View {
 // MARK: - Background
 
 enum WallpaperCategory: String, CaseIterable, Identifiable {
-    case favorites, macOS
+    case favorites, macOS, aurora, waves, glass, radiant, midnight, mesh
     var id: String { rawValue }
-    var label: String { self == .favorites ? "Favorites" : "macOS" }
+    var label: String { self == .macOS ? "macOS" : rawValue.capitalized }
+    /// Framecast's own generated pack, if this category is one.
+    var pack: WallpaperPack? { WallpaperPack(rawValue: rawValue) }
 }
 
 private struct BackgroundTab: View {
     @ObservedObject var model: EditorModel
     @AppStorage("bg.wallpaperCategory") private var wallpaperCategory: WallpaperCategory = .macOS
     @AppStorage("bg.favorites") private var favoritesStore = ""
+    @State private var generating = false
+    @State private var packRefresh = 0
 
     private var bg: BackgroundStyle { model.doc.style.background }
 
@@ -167,6 +171,7 @@ private struct BackgroundTab: View {
     private var wallpapers: some View {
         let current = bg.wallpaperPath ?? Backgrounds.defaultWallpaper()
         return VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(WallpaperCategory.allCases) { cat in
                     let on = wallpaperCategory == cat
@@ -184,8 +189,10 @@ private struct BackgroundTab: View {
                     .buttonStyle(.plain)
                 }
             }
+            }
             Button {
-                if let w = Backgrounds.wallpapers.filter({ $0.path != current }).randomElement() {
+                let pool = wallpaperList.isEmpty ? Backgrounds.wallpapers : wallpaperList
+                if let w = pool.filter({ $0.path != current }).randomElement() {
                     model.edit(.render) { $0.style.background.wallpaperPath = w.path }
                 }
             } label: { Label("Pick random wallpaper", systemImage: "sparkles").frame(maxWidth: .infinity) }
@@ -194,12 +201,35 @@ private struct BackgroundTab: View {
         }
     }
 
+    /// Wallpapers in the selected category.
+    private var wallpaperList: [URL] {
+        _ = packRefresh
+        switch wallpaperCategory {
+        case .favorites:
+            let all = Backgrounds.wallpapers + WallpaperPack.allCases.flatMap(\.urls)
+            return favorites.compactMap { f in all.first { $0.path == f } }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        case .macOS:
+            return Backgrounds.wallpapers
+        default:
+            return wallpaperCategory.pack?.urls.filter { FileManager.default.fileExists(atPath: $0.path) } ?? []
+        }
+    }
+
     @ViewBuilder
     private func wallpaperGrid(current: String?) -> some View {
-        let list = wallpaperCategory == .favorites
-            ? Backgrounds.wallpapers.filter { favorites.contains($0.path) }
-            : Backgrounds.wallpapers
-        if list.isEmpty {
+        let list = wallpaperList
+        if let pack = wallpaperCategory.pack, !pack.isGenerated {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Creating \(pack.label) wallpapers…").font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+            }
+            .task(id: pack) {
+                generating = true
+                await pack.generate()
+                generating = false
+                packRefresh += 1
+            }
+        } else if list.isEmpty {
             Text("Right-click a wallpaper and choose Add to Favorites to keep it here.")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -363,14 +393,17 @@ private struct WallpaperThumb: View {
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(Theme.fill.opacity(0.05))
-            if let image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+        // The square decides the size; the (wide) image is cropped to it, never the other way round.
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let image {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else {
+                    Rectangle().fill(Theme.fill.opacity(0.05))
+                }
             }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         // The selected one gets an inset white ring with a dark gap, like a focus ring.
         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
             .strokeBorder(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 2 : 0.5))
