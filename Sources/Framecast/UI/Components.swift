@@ -39,17 +39,14 @@ enum Theme {
     static let clip = Color(red: 0.86, green: 0.6, blue: 0.2)
     /// Lit gradients for timeline blocks: darker at the top, glowing at the bottom.
     // Timeline blocks, matched to Screen Studio: darker at the top, glowing toward the bottom.
-    static let clipGradient = LinearGradient(colors: [Color(red: 0.53, green: 0.37, blue: 0.14), Color(red: 0.76, green: 0.54, blue: 0.22)],
-                                             startPoint: .top, endPoint: .bottom)
-    static let clipGradientSelected = LinearGradient(colors: [Color(red: 0.60, green: 0.43, blue: 0.17), Color(red: 0.85, green: 0.62, blue: 0.27)],
-                                                     startPoint: .top, endPoint: .bottom)
-    static let clipRim = Color(red: 0.86, green: 0.64, blue: 0.29)
+    // Sampled from Screen Studio's timeline: always lit, darker at the top, glowing toward the bottom.
+    static let clipGradient = LinearGradient(colors: [Color(red: 0.502, green: 0.365, blue: 0.180), Color(red: 0.690, green: 0.522, blue: 0.255)], startPoint: .top, endPoint: .bottom)
+    static let clipGradientSelected = LinearGradient(colors: [Color(red: 0.549, green: 0.408, blue: 0.200), Color(red: 0.745, green: 0.569, blue: 0.286)], startPoint: .top, endPoint: .bottom)
+    static let clipRim = Color(red: 0.780, green: 0.604, blue: 0.333)
     static let clipPin = Color(red: 0.91, green: 0.64, blue: 0.24)
-    static let zoomGradient = LinearGradient(colors: [Color(red: 0.30, green: 0.20, blue: 0.92), Color(red: 0.47, green: 0.39, blue: 0.95)],
-                                             startPoint: .top, endPoint: .bottom)
-    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.34, green: 0.24, blue: 0.96), Color(red: 0.53, green: 0.45, blue: 1.0)],
-                                                     startPoint: .top, endPoint: .bottom)
-    static let zoomRim = Color(red: 0.78, green: 0.74, blue: 1.0)
+    static let zoomGradient = LinearGradient(colors: [Color(red: 0.290, green: 0.212, blue: 0.859), Color(red: 0.459, green: 0.400, blue: 0.914)], startPoint: .top, endPoint: .bottom)
+    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.329, green: 0.251, blue: 0.902), Color(red: 0.506, green: 0.447, blue: 0.941)], startPoint: .top, endPoint: .bottom)
+    static let zoomRim = Color(red: 0.553, green: 0.502, blue: 0.949)
     static let playhead = Color(red: 0.33, green: 0.25, blue: 0.95)
     static let hoverPin = Color(nsColor: adaptive(light: NSColor(white: 0.55, alpha: 1), dark: NSColor(white: 0.3, alpha: 1)))
     static let blade = Color(red: 0.77, green: 0.33, blue: 0.35)

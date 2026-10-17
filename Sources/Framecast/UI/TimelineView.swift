@@ -339,8 +339,9 @@ struct TimelineView: View {
                     model.seek(source: src(v.location.x, pps))
                 })
 
+            // Faint, so the clips keep Screen Studio's pure gold.
             filmstrip(width: width, pps: pps)
-                .opacity(0.25)
+                .opacity(0.1)
                 .frame(width: width, height: clipH)
                 .mask(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
@@ -463,7 +464,7 @@ struct TimelineView: View {
                 }
                 x += step
             }
-            ctx.fill(path, with: .color(Color.white.opacity(0.2)))
+            ctx.fill(path, with: .color(Color.white.opacity(0.1)))
         }
     }
 
@@ -562,16 +563,18 @@ struct TimelineView: View {
         let selected = model.selection == .zoom(z.id)
         let w = max(4, CGFloat(ce - cs) * pps)
         let radius: CGFloat = compact ? 6 : 9
-        let dimmed = isOtherSelected(.zoom(z.id))
         return RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(selected ? Theme.zoomGradientSelected : Theme.zoomGradient)
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(selected ? Color.white : Theme.zoomRim.opacity(0.35), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected ? AnyShapeStyle(Color.white)
+                                           : AnyShapeStyle(LinearGradient(colors: [Theme.zoomRim.opacity(0.35), Theme.zoomRim.opacity(0.8)],
+                                                                          startPoint: .top, endPoint: .bottom)),
+                                  lineWidth: selected ? 2 : 1)
             )
             .overlay { if selected { SelectionRing(radius: radius) } }
-            .shadow(color: Theme.zoom.opacity(selected ? 0.5 : 0.2), radius: selected ? 10 : 4, y: 1)
-            .opacity((model.doc.style.zoomsDisabled ? 0.4 : 1) * (dimmed ? 0.45 : 1))
+            .shadow(color: Theme.zoom.opacity(selected ? 0.55 : 0.3), radius: selected ? 10 : 5, y: 1)
+            .opacity(model.doc.style.zoomsDisabled ? 0.4 : 1)
             .overlay {
                 if w > 54 && !compact {
                     VStack(spacing: 1) {
@@ -661,7 +664,7 @@ struct TimelineView: View {
         switch kind {
         case .blur: return Color(red: 0.25, green: 0.72, blue: 0.85)
         case .spotlight: return Color(red: 0.95, green: 0.78, blue: 0.25)
-        case .text: return Color(red: 0.95, green: 0.42, blue: 0.62)
+        case .text: return Color(red: 0.93, green: 0.48, blue: 0.72)
         case .image: return Color(red: 0.55, green: 0.45, blue: 0.95)
         case .annotation: return Color(red: 0.98, green: 0.45, blue: 0.3)
         case .cameraMove: return Color(red: 0.35, green: 0.8, blue: 0.5)
@@ -747,15 +750,18 @@ struct TimelineView: View {
         let radius: CGFloat = effectsOpen ? 9 : 5
         return RoundedRectangle(cornerRadius: radius, style: .continuous)
             // Deep, opaque fills lit from below with a lighter rim (labels stay readable in light mode too).
-            .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.32 : 0.45), color.mix(with: .black, by: selected ? 0.18 : 0.32)],
+            .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.48 : 0.56), color.mix(with: .black, by: selected ? 0.38 : 0.46)],
                                  startPoint: .top, endPoint: .bottom))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(selected ? Color.white : color.opacity(0.75), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected ? AnyShapeStyle(Color.white)
+                                           : AnyShapeStyle(LinearGradient(colors: [color.opacity(0.35), color.opacity(0.75)],
+                                                                          startPoint: .top, endPoint: .bottom)),
+                                  lineWidth: selected ? 2 : 1)
             )
             .overlay { if selected && effectsOpen { SelectionRing(radius: radius) } }
             .shadow(color: color.opacity(selected ? 0.45 : 0.12), radius: selected ? 8 : 3, y: 1)
-            .opacity((e.disabled ? 0.4 : 1) * (isOtherSelected(.effect(e.id)) ? 0.45 : 1))
+            .opacity(e.disabled ? 0.4 : 1)
             .overlay {
                 if w > 30 && effectsOpen {
                     VStack(spacing: 1) {

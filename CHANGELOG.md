@@ -5,6 +5,8 @@
 - The split tool moves like Screen Studio's: turning it on or off makes the timeline lanes dip and spring back, one after another
 - Each cut gives its lane the same little bounce
 - With the split tool on, the lane under the pointer lifts slightly, so you can see which lane a click will cut
+- Timeline colours sampled from Screen Studio and always lit: gold clips (darker top, glowing bottom), bright violet zooms, and pinker titles. Other blocks no longer dim when one is selected
+- The filmstrip and waveform inside clips are fainter, so the gold reads clearly
 
 ## 1.10.0
 
