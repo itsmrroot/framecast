@@ -158,6 +158,11 @@ private struct GeneralSettings: View {
         }
         SettingToggle(title: "Start Framecast at login", detail: "Open Framecast automatically when you log in, ready in the menu bar.",
                       isOn: Binding(get: { app.launchAtLogin }, set: { app.launchAtLogin = $0 }))
+        SettingToggle(title: "Show Framecast in the menu bar",
+                      detail: app.hideDockIcon ? "Always on while the Dock icon is hidden, so you can still reach Framecast."
+                                               : "Start, pause and stop recordings and open projects from the menu bar. Shows the recording time.",
+                      isOn: Binding(get: { app.showMenuBarIcon || app.hideDockIcon }, set: { app.showMenuBarIcon = $0 }))
+            .disabled(app.hideDockIcon)
         SettingToggle(title: "Hide Dock icon",
                       detail: "Hide the Dock icon when no projects are open and nothing is recording. Framecast stays in the menu bar.",
                       isOn: $app.hideDockIcon)
@@ -315,6 +320,7 @@ private struct ExportSettingsPane: View {
 
 private struct ShortcutSettings: View {
     @ObservedObject private var app = AppSettings.shared
+    @ObservedObject private var hotKeys = HotKeyCenter.shared
     @State private var section = 0
 
     var body: some View {
@@ -331,6 +337,11 @@ private struct ShortcutSettings: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(a.title).font(.system(size: 14, weight: .medium))
                         if let d = a.detail { Text(d).font(.system(size: 12)).foregroundStyle(Theme.textDim) }
+                        if hotKeys.conflicts.contains(a) {
+                            Label("Another app already uses this shortcut, so it won't work here. Pick a different one.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11.5)).foregroundStyle(.orange)
+                        }
                     }
                     Spacer()
                     Button { app.setShortcut(nil, for: a) } label: { Image(systemName: "trash") }
@@ -370,7 +381,8 @@ struct EditorShortcut {
 
     static let all: [EditorShortcut] = [
         EditorShortcut(icon: "playpause", title: "Play / pause", keys: "Space"),
-        EditorShortcut(icon: "scissors", title: "Cut clip at current time", keys: "C  or  S"),
+        EditorShortcut(icon: "scissors", title: "Cut clip at current time", keys: "C"),
+        EditorShortcut(icon: "scissors.circle", title: "Split tool on / off (click a lane to cut it)", keys: "S  ·  Esc"),
         EditorShortcut(icon: "scissors.badge.ellipsis", title: "Remove slice before current time", keys: "X"),
         EditorShortcut(icon: "play", title: "Play or increase speed", keys: "L"),
         EditorShortcut(icon: "play.fill", title: "Play backward or increase speed", keys: "J"),

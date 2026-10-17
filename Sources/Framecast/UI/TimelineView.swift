@@ -11,11 +11,17 @@ struct TimelineView: View {
     @State private var zoomHoverX: CGFloat?
     /// Pointer position anywhere over the timeline (hover pin and split line).
     @State private var hoverX: CGFloat?
-    /// Scrolled down: the zoom lane shrinks to a thin strip, as in Screen Studio.
-    @State private var compact = false
-    @State private var hovering = false
-    @State private var scrollTop = true
-    @State private var scrollMonitor: Any?
+    /// Pointing at the effects lane: effects open up and the zoom lane folds to a thin strip (Screen Studio's
+    /// hover-driven lanes). Otherwise zooms are open and effects are thin bars.
+    @State private var effectsFocus = false
+
+    /// Effects lane open: pointing at it, or (when not pointing at the timeline) an effect is selected.
+    private var effectsOpen: Bool {
+        if effectsFocus { return true }
+        if hoverX == nil, case .effect = model.selection { return true }
+        return false
+    }
+    private var compact: Bool { effectsOpen }
 
     private var bladeActive: Bool { model.bladeMode || NSEvent.modifierFlags.contains(.option) }
 
@@ -28,9 +34,10 @@ struct TimelineView: View {
     }
 
     private let rulerH: CGFloat = 24
-    private let clipH: CGFloat = 60
-    private var zoomH: CGFloat { compact ? 14 : 40 }
-    private let effectRowH: CGFloat = 34
+    private let clipH: CGFloat = 48
+    private var zoomH: CGFloat { compact ? 14 : 46 }
+    private var effectRowH: CGFloat { effectsOpen ? 40 : 10 }
+    private let labelH: CGFloat = 16
     private let gap: CGFloat = 8
     private let inset: CGFloat = 18
 
@@ -38,11 +45,12 @@ struct TimelineView: View {
         let rows = effectRows()
         let rowCount = max(1, (rows.values.max() ?? -1) + 1)
         let effectsH = CGFloat(rowCount) * (effectRowH + 3) + 3
-        let zoomY = rulerH + 6 + clipH + gap + (compact ? 14 : 0)
-        let effectsY = zoomY + zoomH + gap
+        let zoomY = rulerH + 6 + clipH + gap + (compact ? labelH : 0)
+        let effectsY = zoomY + zoomH + gap + (effectsOpen ? 0 : labelH)
         let totalH = effectsY + effectsH + 8
-        // The panel keeps its full height when the lanes compact, so the preview doesn't jump.
-        let fullH = rulerH + 6 + clipH + gap + 40 + gap + effectsH + 8
+        // The panel keeps the height of the taller arrangement, so the preview doesn't jump as lanes fold.
+        let openEffectsH = CGFloat(rowCount) * 43 + 3
+        let fullH = rulerH + 6 + clipH + gap + max(46 + gap + labelH + CGFloat(rowCount) * 13 + 3, labelH + 14 + gap + openEffectsH) + 8
         let spring = Animation.spring(response: 0.38, dampingFraction: 0.82)
         return VStack(spacing: 0) {
             header
@@ -60,60 +68,70 @@ struct TimelineView: View {
                         effectTrack(width: contentW, pps: pps, rows: rows, height: effectsH)
                             .offset(y: effectsY)
                         if compact {
-                            laneLabel("Zooms").offset(y: zoomY - 15)
-                                .transition(.opacity)
+                            laneLabel("Zooms").offset(y: zoomY - labelH).transition(.opacity)
                         }
-                        if let x = hoverX, !bladeActive, drag == nil {
-                            HoverPin(height: totalH - 4).offset(x: x - 7).allowsHitTesting(false)
+                        if !effectsOpen && !model.doc.effects.isEmpty {
+                            laneLabel("Effects").offset(y: effectsY - labelH).transition(.opacity)
+                        }
+                        if let x = hoverX, drag == nil {
+                            // Screen Studio: the same grey pin; in split mode its line turns red.
+                            HoverPin(height: totalH - 4, blade: bladeActive).offset(x: x - 7).allowsHitTesting(false)
                         }
                         playhead(pps: pps, height: totalH - 4)
                         if model.bladeMode {
-                            // Split tool: a click anywhere cuts straight down through every lane.
+                            // Split tool: a click cuts only the lane under the pointer (not the ruler).
                             Color.clear
-                                .frame(width: contentW, height: totalH)
+                                .frame(width: contentW, height: totalH - rulerH)
                                 .contentShape(Rectangle())
-                                .gesture(SpatialTapGesture().onEnded { v in model.cut(at: src(v.location.x, pps)) })
+                                .gesture(SpatialTapGesture().onEnded { v in
+                                    bladeCut(x: v.location.x, y: v.location.y + rulerH, pps: pps,
+                                             zoomY: zoomY, effectsY: effectsY, rows: rows)
+                                })
                                 .pointerStyle(.image(Image(nsImage: ScissorsCursor.image), hotSpot: UnitPoint(x: 0.5, y: 0.5)))
-                        }
-                        if bladeActive, let x = hoverX {
-                            BladeLine(height: totalH - 4).offset(x: x - 13).allowsHitTesting(false)
-                                .transition(.opacity)
+                                .offset(y: rulerH)
                         }
                     }
                     .frame(width: contentW, height: totalH, alignment: .topLeading)
                     .onContinuousHover { phase in
-                        if case .active(let p) = phase { hoverX = min(max(0, p.x), contentW) } else { hoverX = nil }
+                        if case .active(let p) = phase {
+                            hoverX = min(max(0, p.x), contentW)
+                            // Fold lanes by where the pointer is, with a little hysteresis so they don't flicker.
+                            if !effectsFocus && p.y > effectsY - 2 { effectsFocus = true }
+                            else if effectsFocus && p.y < zoomY + zoomH + 2 { effectsFocus = false }
+                            if drag == nil && newZoom == nil { model.scrub(comp: Double(hoverX! / pps)) }
+                        } else {
+                            hoverX = nil
+                            effectsFocus = false
+                            model.scrub(comp: nil)
+                        }
                     }
                     .padding(.horizontal, inset)
                     .padding(.top, 4)
-                    .animation(spring, value: compact)
+                    .animation(spring, value: effectsOpen)
                     .animation(.easeOut(duration: 0.15), value: model.bladeMode)
                 }
-                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y <= 1 } action: { _, top in scrollTop = top }
+                .defaultScrollAnchor(.topLeading)
             }
         }
         // Grows with stacked effect lanes (up to a limit, then scrolls).
-        .frame(height: min(max(38 + fullH + 8, 236), 380))
-        .onHover { hovering = $0 }
-        .onAppear(perform: installScrollMonitor)
-        .onDisappear {
-            if let m = scrollMonitor { NSEvent.removeMonitor(m) }
-            scrollMonitor = nil
-        }
+        .frame(height: min(max(38 + fullH + 8, 236), 400))
     }
 
-    /// Scrolling down over the timeline compacts the zoom lane; scrolling back up at the top restores it.
-    private func installScrollMonitor() {
-        guard scrollMonitor == nil else { return }
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { e in
-            guard hovering, abs(e.scrollingDeltaY) > max(2, abs(e.scrollingDeltaX) * 1.5) else { return e }
-            let down = e.scrollingDeltaY < 0
-            if down && !compact {
-                compact = true
-            } else if !down && compact && scrollTop {
-                compact = false
+    /// Split tool click: cut the clip, the zoom or the effect under the pointer, and nothing else.
+    private func bladeCut(x: CGFloat, y: CGFloat, pps: CGFloat, zoomY: CGFloat, effectsY: CGFloat, rows: [UUID: Int]) {
+        let t = src(x, pps)
+        if y < zoomY - gap / 2 - (compact ? labelH : 0) {
+            model.cutClip(at: t)
+        } else if y < effectsY - gap / 2 - (effectsOpen ? 0 : labelH) {
+            model.cutZoom(at: t)
+        } else {
+            let row = Int((y - effectsY - 3) / (effectRowH + 3))
+            if let e = model.doc.effects.first(where: { rows[$0.id] == row && t > $0.start && t < $0.end })
+                ?? model.doc.effects.first(where: { t > $0.start && t < $0.end && !effectsOpen }) {
+                model.cutEffect(e.id, at: t)
+            } else {
+                NSSound.beep()
             }
-            return e
         }
     }
 
@@ -360,7 +378,7 @@ struct TimelineView: View {
                     VStack(spacing: 2) {
                         Text("Clip").font(.system(size: 11, weight: .medium)).opacity(0.32)
                         HStack(spacing: 4) {
-                            Text(String(format: "%.1fs", (e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            Text(Self.seconds((e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
                             if w > 110 {
                                 Image(systemName: "gauge.with.dots.needle.33percent").font(.system(size: 10.5, weight: .semibold))
                                 Text("\(c.speed, specifier: "%g")×").font(.system(size: 12, weight: .semibold))
@@ -378,7 +396,7 @@ struct TimelineView: View {
             .gesture(SpatialTapGesture().onEnded { v in
                 let t = min(e, s + Double(v.location.x / pps) * c.speed)
                 if bladeActive {
-                    model.cut(at: t)
+                    model.cutClip(at: t)
                 } else {
                     model.selection = .clip(c.id)
                     model.seek(source: t)
@@ -427,7 +445,7 @@ struct TimelineView: View {
                 }
                 x += step
             }
-            ctx.fill(path, with: .color(Color.white.opacity(0.3)))
+            ctx.fill(path, with: .color(Color.white.opacity(0.2)))
         }
     }
 
@@ -458,15 +476,10 @@ struct TimelineView: View {
 
     private func zoomTrack(width: CGFloat, pps: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.fill.opacity(0.025))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(Theme.zoom.opacity(0.25))
-                )
+            // No lane "well": blocks float on the background, as in Screen Studio.
+            Color.clear
                 .overlay {
-                    if model.doc.zooms.isEmpty && newZoom == nil {
+                    if model.doc.zooms.isEmpty && newZoom == nil && !compact {
                         Text("Click or drag to add zoom on cursor")
                             .font(.system(size: 12)).foregroundStyle(Theme.textDim)
                     }
@@ -530,41 +543,33 @@ struct TimelineView: View {
         let (cs, ce) = span(s, e)
         let selected = model.selection == .zoom(z.id)
         let w = max(4, CGFloat(ce - cs) * pps)
-        let radius: CGFloat = compact ? 7 : 10
+        let radius: CGFloat = compact ? 6 : 9
+        let dimmed = isOtherSelected(.zoom(z.id))
         return RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(selected ? Theme.zoomGradientSelected : Theme.zoomGradient)
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(selected ? Theme.zoomRim : Theme.zoomRim.opacity(0.28), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected ? Color.white : Theme.zoomRim.opacity(0.35), lineWidth: selected ? 2 : 1)
             )
-            // Selected: a second, outer ring, as Screen Studio draws it.
-            .overlay {
-                if selected {
-                    RoundedRectangle(cornerRadius: radius + 3, style: .continuous)
-                        .strokeBorder(Theme.zoomRim.opacity(0.55), lineWidth: 1)
-                        .padding(-3)
-                }
-            }
-            .shadow(color: Theme.zoom.opacity(selected ? 0.55 : 0.15), radius: selected ? 10 : 3, y: 1)
-            .opacity(model.doc.style.zoomsDisabled ? 0.4 : 1)
+            .overlay { if selected { SelectionRing(radius: radius) } }
+            .shadow(color: Theme.zoom.opacity(selected ? 0.5 : 0.2), radius: selected ? 10 : 4, y: 1)
+            .opacity((model.doc.style.zoomsDisabled ? 0.4 : 1) * (dimmed ? 0.45 : 1))
             .overlay {
                 if w > 54 && !compact {
                     VStack(spacing: 1) {
-                        if w > 90 {
-                            Text(z.instant ? "Instant zoom" : (z.isAuto ? "Auto zoom" : "Zoom"))
-                                .font(.system(size: 10, weight: .medium)).opacity(0.5)
-                        }
+                        Text(z.instant ? "Instant zoom" : "Zoom")
+                            .font(.system(size: 11, weight: .medium)).opacity(0.4)
                         HStack(spacing: 4) {
-                            Image(systemName: "plus.magnifyingglass").font(.system(size: 9.5, weight: .semibold))
-                            Text("\(z.scale, specifier: "%.1f")×").font(.system(size: 11, weight: .bold))
+                            Image(systemName: "magnifyingglass").font(.system(size: 10, weight: .semibold))
+                            Text(Self.scale(z.scale)).font(.system(size: 12, weight: .semibold))
                             if w > 110 {
-                                Text("·").opacity(0.6)
-                                Image(systemName: z.mode == .fixed ? "scope" : "cursorarrow.motionlines").font(.system(size: 9.5))
-                                Text(z.mode == .fixed ? "Manual" : "Auto").font(.system(size: 10.5, weight: .semibold))
+                                Image(systemName: z.mode == .fixed ? "scope" : "computermouse.fill").font(.system(size: 9.5))
+                                    .padding(.leading, 4)
+                                Text(z.mode == .fixed ? "Manual" : "Auto").font(.system(size: 11.5, weight: .semibold))
                             }
                         }
                     }
-                    .foregroundStyle(.white.opacity(selected ? 1 : 0.62))
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                 }
             }
@@ -651,13 +656,7 @@ struct TimelineView: View {
 
     private func effectTrack(width: CGFloat, pps: CGFloat, rows: [UUID: Int], height: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.fill.opacity(0.025))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(Theme.fill.opacity(0.12))
-                )
+            Color.clear
                 .overlay(alignment: .leading) {
                     if model.doc.effects.isEmpty {
                         Label("Effects: blur, spotlight, titles, images, arrows, cursor and camera. Add one with + Effect", systemImage: "sparkles")
@@ -724,22 +723,25 @@ struct TimelineView: View {
     }
 
     private func effectFace(_ e: EffectSegment, selected: Bool, w: CGFloat, color: Color, title: String) -> some View {
-        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let radius: CGFloat = effectsOpen ? 9 : 5
+        return RoundedRectangle(cornerRadius: radius, style: .continuous)
             // Deep, opaque fills lit from below with a lighter rim (labels stay readable in light mode too).
             .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.32 : 0.45), color.mix(with: .black, by: selected ? 0.18 : 0.32)],
                                  startPoint: .top, endPoint: .bottom))
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(selected ? Color.white.opacity(0.9) : color.opacity(0.75), lineWidth: selected ? 2 : 1)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(selected ? Color.white : color.opacity(0.75), lineWidth: selected ? 2 : 1)
             )
+            .overlay { if selected && effectsOpen { SelectionRing(radius: radius) } }
             .shadow(color: color.opacity(selected ? 0.45 : 0.12), radius: selected ? 8 : 3, y: 1)
-            .opacity(e.disabled ? 0.4 : 1)
+            .opacity((e.disabled ? 0.4 : 1) * (isOtherSelected(.effect(e.id)) ? 0.45 : 1))
             .overlay {
-                if w > 30 {
+                if w > 30 && effectsOpen {
                     VStack(spacing: 1) {
                         if w > 90 && title != e.kind.label { Text(e.kind.label).font(.system(size: 10, weight: .medium)).opacity(0.38) }
                         HStack(spacing: 4) {
-                            Image(systemName: e.disabled ? "eye.slash" : e.kind.icon).font(.system(size: 10, weight: .semibold))
+                            Image(systemName: e.disabled ? "eye.slash" : (e.kind == .annotation ? e.shape.icon : e.kind.icon))
+                                .font(.system(size: 10, weight: .semibold))
                             if w > 70 { Text(title).font(.system(size: 11.5, weight: .semibold)) }
                         }
                     }
@@ -751,6 +753,21 @@ struct TimelineView: View {
     }
 
     // MARK: Shared
+
+    /// "45s", or "9.5s" under ten seconds.
+    static func seconds(_ s: Double) -> String { s >= 10 ? "\(Int(s.rounded()))s" : String(format: "%.1fs", locale: Locale(identifier: "en_US_POSIX"), s) }
+
+    /// "4×", "1.5×" (never a locale's decimal comma).
+    static func scale(_ s: Double) -> String { String(format: "%g×", locale: Locale(identifier: "en_US_POSIX"), (s * 10).rounded() / 10) }
+
+    /// Another block of the same kind is selected: this one dims, as in Screen Studio.
+    private func isOtherSelected(_ mine: EditorModel.Selection) -> Bool {
+        switch (model.selection, mine) {
+        case (.zoom(let a), .zoom(let b)): return a != b
+        case (.effect(let a), .effect(let b)): return a != b
+        default: return false
+        }
+    }
 
     private func edgeHandle(color: Color, visible: Bool, onDrag: @escaping (CGFloat, Bool) -> Void) -> some View {
         EdgeHandle(color: color, visible: visible, onDrag: onDrag)
@@ -819,55 +836,60 @@ struct PinShape: Shape {
     }
 }
 
-/// Where the pointer is on the timeline: a dim pin and line.
+/// Where the pointer is on the timeline: a grey round pin and line; the line turns red for the split tool.
 private struct HoverPin: View {
     let height: CGFloat
+    var blade = false
     var body: some View {
         ZStack(alignment: .top) {
-            Rectangle().fill(Theme.fill.opacity(0.18)).frame(width: 1, height: height)
-            PinShape().fill(Theme.hoverPin).frame(width: 12, height: 15).offset(y: -3)
+            Rectangle().fill(blade ? Theme.blade : Theme.fill.opacity(0.18)).frame(width: 1, height: height)
+            Circle().fill(Theme.hoverPin).frame(width: 12, height: 12).offset(y: -3)
         }
         .frame(width: 14, height: height)
     }
 }
 
-/// The split tool's cut line: red, through every lane, with a scissors pin in the ruler.
-private struct BladeLine: View {
-    let height: CGFloat
+/// Screen Studio's selection: a white outline plus a second ring just outside it.
+private struct SelectionRing: View {
+    let radius: CGFloat
     var body: some View {
-        ZStack(alignment: .top) {
-            Rectangle().fill(Theme.blade).frame(width: 1.5, height: height)
-            PinShape().fill(Theme.clipPin).frame(width: 24, height: 30)
-                .overlay(Image(systemName: "scissors").font(.system(size: 10, weight: .bold)).foregroundStyle(.black.opacity(0.8)).offset(y: -3))
-                .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
-                .offset(y: -6)
-        }
-        .frame(width: 26, height: height)
+        RoundedRectangle(cornerRadius: radius + 3, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.6), lineWidth: 1)
+            .padding(-3)
+            .allowsHitTesting(false)
     }
 }
 
-/// The split tool's pointer: scissors with a dark outline, readable on any lane.
+/// The split tool's pointer, drawn like Screen Studio's: upright white scissors (blades up), 32 pt,
+/// a thin crisp black outline and hollow finger rings.
 enum ScissorsCursor {
     static let image: NSImage = {
-        let size = NSSize(width: 26, height: 26)
+        let size = NSSize(width: 32, height: 32)
         return NSImage(size: size, flipped: false) { rect in
-            let config = NSImage.SymbolConfiguration(pointSize: 17, weight: .bold)
+            let config = NSImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
             guard let symbol = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Split")?.withSymbolConfiguration(config) else { return false }
             func tinted(_ color: NSColor) -> NSImage {
-                let img = NSImage(size: symbol.size, flipped: false) { r in
+                NSImage(size: symbol.size, flipped: false) { r in
                     symbol.draw(in: r)
                     color.set()
                     r.fill(using: .sourceAtop)
                     return true
                 }
-                return img
             }
+            NSGraphicsContext.current?.imageInterpolation = .high
+            // Rotate the horizontal symbol a quarter turn so the blades point up.
+            let t = NSAffineTransform()
+            t.translateX(by: rect.midX, yBy: rect.midY)
+            t.rotate(byDegrees: 90)
+            t.translateX(by: -rect.midX, yBy: -rect.midY)
+            t.concat()
             let s = symbol.size
             let origin = NSPoint(x: (rect.width - s.width) / 2, y: (rect.height - s.height) / 2)
+            // A one-point outline: the black shape drawn around the white one in eight directions.
             let outline = tinted(.black)
-            for dx in [-1.5, 0, 1.5] { for dy in [-1.5, 0, 1.5] where dx != 0 || dy != 0 {
-                outline.draw(at: NSPoint(x: origin.x + dx, y: origin.y + dy), from: .zero, operation: .sourceOver, fraction: 0.85)
-            } }
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)] as [(CGFloat, CGFloat)] {
+                outline.draw(at: NSPoint(x: origin.x + dx, y: origin.y + dy), from: .zero, operation: .sourceOver, fraction: 1)
+            }
             tinted(.white).draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
             return true
         }

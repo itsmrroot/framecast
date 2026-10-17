@@ -152,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         AppSettings.shared.applyAppearance()
         HotKeyCenter.shared.registerAll()
+        MenuBarController.shared.update()
         let opensProject = CommandLine.arguments.contains("--open")
         if AppSettings.shared.launchView == .home || opensProject {
             WindowManager.shared.showHome()

@@ -45,14 +45,14 @@ enum Theme {
                                                      startPoint: .top, endPoint: .bottom)
     static let clipRim = Color(red: 0.86, green: 0.64, blue: 0.29)
     static let clipPin = Color(red: 0.91, green: 0.64, blue: 0.24)
-    static let zoomGradient = LinearGradient(colors: [Color(red: 0.15, green: 0.13, blue: 0.40), Color(red: 0.19, green: 0.16, blue: 0.52)],
+    static let zoomGradient = LinearGradient(colors: [Color(red: 0.30, green: 0.20, blue: 0.92), Color(red: 0.47, green: 0.39, blue: 0.95)],
                                              startPoint: .top, endPoint: .bottom)
-    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.33, green: 0.25, blue: 0.93), Color(red: 0.47, green: 0.40, blue: 1.0)],
+    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.34, green: 0.24, blue: 0.96), Color(red: 0.53, green: 0.45, blue: 1.0)],
                                                      startPoint: .top, endPoint: .bottom)
     static let zoomRim = Color(red: 0.78, green: 0.74, blue: 1.0)
     static let playhead = Color(red: 0.33, green: 0.25, blue: 0.95)
     static let hoverPin = Color(nsColor: adaptive(light: NSColor(white: 0.55, alpha: 1), dark: NSColor(white: 0.3, alpha: 1)))
-    static let blade = Color(red: 0.95, green: 0.3, blue: 0.27)
+    static let blade = Color(red: 0.77, green: 0.33, blue: 0.35)
     static let record = Color(red: 1.0, green: 0.27, blue: 0.3)
     static let text = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.87), dark: NSColor(white: 1, alpha: 0.92)))
     static let textDim = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.55), dark: NSColor(white: 1, alpha: 0.55)))

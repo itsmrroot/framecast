@@ -84,7 +84,7 @@ final class EditorModel: ObservableObject {
         player.actionAtItemEnd = .pause
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 60), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
-                guard let self, !self.isSeeking else { return }
+                guard let self, !self.isSeeking, self.hoverTime == nil else { return }
                 self.compTime = t.seconds
             }
         }
@@ -275,6 +275,7 @@ final class EditorModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .webP, .image]
         panel.message = "Choose an image to show over the video"
+        panel.directoryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return importOverlayImage(url)
     }
@@ -319,7 +320,6 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    private var renderNudge = false
 
     private func refreshRender() {
         guard let built, let item = player.currentItem else { return }
@@ -329,9 +329,16 @@ final class EditorModel: ObservableObject {
         item.videoComposition = previewVideoComposition(model, built: built)
         item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style)
         if !isPlaying {
-            // A seek to the exact same time can reuse the old frame, so nudge it to force a fresh render.
-            renderNudge.toggle()
-            player.seek(to: CMTime(sec: compTime + (renderNudge ? 0.0005 : 0)), toleranceBefore: .zero, toleranceAfter: .zero)
+            // A seek within the same frame reuses the frame already on screen, so step a frame away and back:
+            // the new effect (image, arrow…) then shows straight away on the paused preview.
+            let t = hoverTime ?? compTime
+            let away = t > 0.05 ? t - 1.0 / 30 : t + 1.0 / 30
+            player.seek(to: CMTime(sec: away), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self, !self.isPlaying else { return }
+                    self.player.seek(to: CMTime(sec: self.hoverTime ?? self.compTime), toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
         }
     }
 
@@ -341,6 +348,7 @@ final class EditorModel: ObservableObject {
         if isPlaying {
             player.pause()
         } else {
+            if hoverTime != nil { scrub(comp: nil) }
             if compTime >= duration - 0.05 { seek(comp: 0) }
             if playbackRate <= 0 { playbackRate = 1 }
             player.rate = playbackRate
@@ -372,9 +380,44 @@ final class EditorModel: ObservableObject {
         if isPlaying { player.rate = rate }
     }
 
+    /// Edited time under the pointer while hovering the timeline: the preview shows it, the playhead stays put.
+    @Published private(set) var hoverTime: Double?
+    private var pendingScrub: Double?
+
+    /// Shows the frame at a hovered time without moving the playhead; nil returns to the playhead.
+    func scrub(comp: Double?) {
+        guard isReady, !isPlaying else { if comp == nil { hoverTime = nil }; return }
+        guard let comp else {
+            guard hoverTime != nil else { return }
+            hoverTime = nil
+            pendingScrub = nil
+            seek(comp: compTime)
+            return
+        }
+        let t = clamp(comp, 0, max(0, duration))
+        hoverTime = t
+        if isSeeking { pendingScrub = t; return }
+        isSeeking = true
+        player.seek(to: CMTime(sec: t), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSeeking = false
+                if let p = self.pendingSeek {
+                    self.pendingSeek = nil
+                    self.seek(comp: p)
+                } else if let s = self.pendingScrub {
+                    self.pendingScrub = nil
+                    if self.hoverTime != nil { self.scrub(comp: s) }
+                }
+            }
+        }
+    }
+
     func seek(comp: Double) {
         let t = clamp(comp, 0, max(0, duration))
         compTime = t
+        hoverTime = nil
+        pendingScrub = nil
         if isSeeking {
             pendingSeek = t
             return
@@ -574,7 +617,7 @@ final class EditorModel: ObservableObject {
         switch kind {
         case .idle: return ActivityAnalyzer.idleRanges(cursor: cursorTrack, keys: keys, duration: sourceDuration)
         case .typing: return ActivityAnalyzer.typingRanges(keys: keys)
-        case .silence: return ActivityAnalyzer.silentRanges(waveform: waveform, duration: sourceDuration)
+        case .silence: return ActivityAnalyzer.silentRanges(waveform: waveform, duration: sourceDuration, threshold: nil)
         }
     }
 
@@ -582,7 +625,14 @@ final class EditorModel: ObservableObject {
     @discardableResult
     func applySmartSpeed(_ kind: SmartSpeed, speed: Double?) -> Int {
         let ranges = smartRanges(kind)
-        guard !ranges.isEmpty else { NSSound.beep(); return 0 }
+        guard !ranges.isEmpty else {
+            switch kind {
+            case .idle: notify("No idle moments found")
+            case .typing: notify("No typing found")
+            case .silence: notify("No silent pauses found")
+            }
+            return 0
+        }
         edit(.timeline) { d in
             d.clips = ClipOps.apply(ranges, to: d.clips, speed: speed)
         }
@@ -595,6 +645,19 @@ final class EditorModel: ObservableObject {
     }
 
     /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    /// A short message over the preview ("No silent pauses found").
+    @Published private(set) var notice: String?
+    private var noticeTask: Task<Void, Never>?
+
+    func notify(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_800_000_000)
+            if !Task.isCancelled { self?.notice = nil }
+        }
+    }
+
     /// Removes a caption line's stretch of video (editing by transcript), and the line itself.
     func cutCaption(_ id: UUID) {
         guard let cue = doc.captions.first(where: { $0.id == id }) else { return }
@@ -604,29 +667,36 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    func cut(at t: Double) {
-        let minPiece = 0.15
-        let hitsClip = doc.clips.contains { t > $0.start + minPiece && t < $0.end - minPiece }
-        let hitsZoom = doc.zooms.contains { t > $0.start + minPiece && t < $0.end - minPiece }
-        let hitsEffect = doc.effects.contains { t > $0.start + minPiece && t < $0.end - minPiece }
-        guard hitsClip || hitsZoom || hitsEffect else { NSSound.beep(); return }
+    // The split tool cuts only the lane you click, as in Screen Studio.
+    private let minPiece = 0.15
+
+    func cutClip(at t: Double) {
+        guard let i = doc.clips.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) else { NSSound.beep(); return }
         edit(.timeline) { d in
-            if let i = d.clips.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) {
-                var a = d.clips[i], b = a
-                a.end = t; b.id = UUID(); b.start = t
-                d.clips.replaceSubrange(i...i, with: [a, b])
-            }
-            if let i = d.zooms.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) {
-                var a = d.zooms[i], b = a
-                a.end = t; a.isAuto = false
-                b.id = UUID(); b.start = t; b.isAuto = false
-                d.zooms.replaceSubrange(i...i, with: [a, b])
-            }
-            for i in d.effects.indices.reversed() where t > d.effects[i].start + minPiece && t < d.effects[i].end - minPiece {
-                var a = d.effects[i], b = a
-                a.end = t; b.id = UUID(); b.start = t
-                d.effects.replaceSubrange(i...i, with: [a, b])
-            }
+            var a = d.clips[i], b = a
+            a.end = t; b.id = UUID(); b.start = t
+            d.clips.replaceSubrange(i...i, with: [a, b])
+        }
+        selection = .none
+    }
+
+    func cutZoom(at t: Double) {
+        guard let i = doc.zooms.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) else { NSSound.beep(); return }
+        edit(.render) { d in
+            var a = d.zooms[i], b = a
+            a.end = t; a.isAuto = false
+            b.id = UUID(); b.start = t; b.isAuto = false
+            d.zooms.replaceSubrange(i...i, with: [a, b])
+        }
+        selection = .none
+    }
+
+    func cutEffect(_ id: UUID, at t: Double) {
+        guard let i = doc.effects.firstIndex(where: { $0.id == id && t > $0.start + minPiece && t < $0.end - minPiece }) else { NSSound.beep(); return }
+        edit(.render) { d in
+            var a = d.effects[i], b = a
+            a.end = t; b.id = UUID(); b.start = t
+            d.effects.replaceSubrange(i...i, with: [a, b])
         }
         selection = .none
     }

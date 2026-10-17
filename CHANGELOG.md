@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.0
+
+**Menu bar**
+- Framecast now has a menu bar item, like Screen Studio: new recording, record display / window / area / iPhone, speaker notes, open the last or a recent project, open any project, show recordings, show in Dock, settings, updates and quit, with shortcuts shown next to each
+- While recording it shows a red dot and the elapsed time, and the menu has Stop, Pause / Resume, Restart, Add Flag, Show / Hide Controls and Discard
+- Turn it off in Settings → General (it stays while the Dock icon is hidden, so you can always reach Framecast)
+
+**Timeline, matched to Screen Studio** (from a side-by-side test)
+- The split tool cuts only the lane you click: the clip, a zoom or an effect, not everything at that moment
+- New scissors pointer: upright, crisp outline, hollow finger rings
+- Splitting shows a red line under the grey hover pin, as in Screen Studio
+- Lanes fold by pointing: zooms are open and effects are thin bars; point at the effects and they open while zooms fold
+- Hovering the timeline previews that moment in the video and the time display, without moving the playhead
+- Bright zooms, white double ring on the selected block, and other blocks of the same kind dim
+- Zoom labels read "4×  Auto" (no "2,0×"), clips read "45s", and the shape icon follows the shape
+
+**Fixes**
+- Dragging a title or image on the video works from anywhere on it (it only worked from the top-left corner)
+- New images and arrows show right away on the paused preview
+- Cut / Speed Up Silent Pauses now find pauses in normal room noise, and say so when there are none
+- Settings → Shortcuts warns when another app (Screen Studio, for one) already uses a shortcut
+- The image picker opens in Pictures
+
 ## 1.8.0
 
 New editing tools, picked from what people ask Screen Studio for most.

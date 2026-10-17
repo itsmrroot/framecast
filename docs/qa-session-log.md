@@ -1,0 +1,94 @@
+# QA log
+- Baseline 09:31: v1.4.0. Home window open. Library: 17.10 09:22 (1:22, NOT mine), 16.10 19:03, 16.10 14:22. Home name/note fields prefilled "QA test 1"/"QA note".
+- Baseline toggles: camera off, mic off, sys audio off, countdown 3s, 60fps, auto zoom ON, hide desktop icons ON, keystrokes off.
+- Check for updates: "You're up to date / Framecast 1.4.0 is the latest version." Window opens at top-left of home window, not centred (02-up-to-date.jpg)
+- Settings General: When opens=Recording toolbar, Appearance=Dark, login off, hide dock off, auto updates on. Settings window bottom clips "Reset…" button (05). Settings window opens offset over home window.
+- Relaunch: toolbar opens centred (344,455 823x64). Home window NOT shown. OK.
+- open_application (dock-click equivalent) while toolbar open -> home window shown. OK. Home name/note fields were "QA test 1"/"QA note" before quit, empty after relaunch (not persisted – fine).
+- Toolbar camera/mic/system audio menus: current choice has NO checkmark ("No camera" etc. unchecked) (03). Only "Show camera preview" toggle shows ✓. Code uses Label(title, systemImage:"checkmark") which NSMenu doesn't render.
+- Mic menu lists: No microphone, Beschir's iPhone Mic, MacBook Pro Mic, MS Teams Audio, Mic Mode (Voice Isolation)…
+- Camera menu: no max resolution option in menu (only Settings).
+- System audio menu: all apps / selected apps… / don't record (04). First attempt clicking "selected apps…" with mouse: menu closed, nothing opened, Finder came to front (1x). Keyboard select worked.
+- App picker (360x440, hidden from screenshots): "Record audio from", lists only RUNNING regular apps (7). Cancel / "Use N Apps" (disabled at 0). BUG: ticking apps writes setting immediately; Cancel doesn't revert -> reopening shows "Use 1 App" (reproduced 1/1). Restored to 0.
+- Picker can't add an app that isn't running yet.
+- Gear menu (07): sections While recording / After recording, countdown submenu (No/3/5/10, ✓ works there), frame rate, Open Framecast Window, Settings. "Show Speaker Notes" shows no shortcut hint.
+- Dock right-click menu: drawn by Dock, invisible to screenshots; keyboard nav (down×7, return) did nothing; Escape pressed while Framecast frontmost CLOSED the recording toolbar (unexpected?). Dock menu items verified from code only.
+- Dock click: no windows -> toolbar; again -> home window. With home window open & toolbar closed: dock click does nothing (code returns early when any window open).
+- A Finder window showing ~/Desktop/Projects (framecast selected) appeared at 09:36 – not caused by me as far as I can tell (Claude app was frontmost).
+- Display mode: full-screen overlay window with name/note fields, Start recording, ▾ (AX label "Go Down"). Toolbar window disappears while display picker active.
+- After-recording menu (06): Create project / Export & copy / Export & save / ✓ auto zooms / Quick Export Settings… — current action has NO checkmark (same as device menus).
+- REC A ("Recording 17.10.2026 at 09:38", 57.1s, MINE): BUG/UX: choosing "Create project" in Start ▾ menu immediately STARTS recording (menu item = start). No chance to type name. Countdown not observed (hidden).
+- Control bar (255x46 at bottom-centre y=871): Stop, Pause/Play, restart ("Counterclockwise Curved Arrow" AX label), cancel ("Bin" AX label) – SF symbol names leak as accessibility labels. Also ▾ menu labelled "Go Down".
+- Pause/resume via control bar: OK. Menu bar timer shows elapsed (0:27 at that point).
+- ⌥⌘⌃F flag: OK (flag count 1 on timeline toolbar).
+- ⌥⌘/ speaker notes: NOTHING happened (tried '/', '-' , during recording and idle; 4 attempts). ⌘⇧2 and flag hotkeys work, so hotkeys in general fine.
+- ⌘⇧2 stopped recording -> editor opened directly (create project). OK (08).
+- REC A started at 09:37:53 = ~3 s after I clicked "Create project" in ▾ menu (09:37:50) -> menu item selection started recording (seen 1x; 2nd time with "Export and copy" it did NOT start). project.json flags [24.86] ok.
+- REC B "QA-B clipboard export" (09.40.40.framecast, 15.3s): name + note typed in display picker saved (name, notes). Countdown pill window 304x58 appeared. After stop: export-done widget 340x134 bottom-right (Show in Finder / Done / Close) – hidden from screenshots. Clipboard read as text was empty (file object). Export saved to ~/Movies/Framecast/Exports/QA-B clipboard export.mp4 (h264 1582x1080 60fps 15.28s) -> plays, frame OK (exp-B-frame5s.jpg). Double-click in Finder didn't open a visible player (default app not granted).
+- 0 zooms created (no clicks during recording) – expected.
+- Project folders keep "Recording <date>" names even when named – fine but Finder shows different name than library.
+- After-recording menu: even with "Export and copy" selected, no ✓ shown (confirmed 2x). Choosing an item did NOT start recording (2/2 since REC A).
+- Export-done widget stays on screen indefinitely (still there 2 min later, until next stop).
+- REC C "QA-C save to file": countdown pill not AX-accessible. After stop: Save dialog "Save As: QA-C save to file", Where defaults to ~/Movies (not ~/Movies/Framecast/Exports where clipboard exports go) – inconsistent. Saved -> h264 1582x1080 60fps 10.53s OK. During export Finder shows a temp file "QA-C save to file.mp4…oZ2SbQ" next to the target (cosmetic).
+- AREA mode: overlay no AX; drew 551x331pt. Panel: W×H fields, aspect menu (Any,16:9,4:3,1:1,3:4,9:16 – no custom, no ✓), Saved (No saved sizes / Save Current Size), Cancel, Name field (NO note field, though changelog says area selector has name+note), Start ▾. No X/Y fields.
+- BUG: typed W applies only on Return; Tab or clicking elsewhere silently discards (typed 800+Tab -> saved size showed 551×310). Code: onSubmit only.
+- 16:9 kept width, set height (551x310) ✓. Typing a width resets aspect to "Any aspect" (lock lost).
+- Typed 800 + Return -> recorded 801×311 pt (off by one; H 311 for 16:9 of 551 earlier) – rounding.
+- Saved sizes: no way to delete an entry from the UI. I saved "551 × 310" and CANNOT remove it (stored in rec.savedAreas defaults).
+- REC D "QA-D area" (09.45.29.framecast) 7.25s, source "Area of Built-in Retina Display", 1602x622 px OK. After-recording choice persisted (save to file) -> Save dialog; Cancel -> project kept, no export. OK.
+- CONTEXT: earlier interrupted attempt 09:22-09:30 (same session). Original state at 09:24: camera off, mic = MacBook Pro Microphone, system audio off, app picker had 1 app pre-ticked (unknown which). First attempt turned mic off, cleared apps. Its typed name/note ("QA test 1"/"QA note") mirrored into home fields (live mirror confirmed).
+- 09:22 recording (folder 09.20.37, 1:22, mic) predates QA request -> USER's, keep.
+- Window mode picker: 700x520 window, Cancel + 2 window thumbnails (only 2 windows listed: Finder + ?).
+- REC W window "Recording 17.10.2026 at 14:13" (14.12.58, 12.74s, source "Finder — Projects", 1074x881pt): picking a thumbnail starts countdown immediately – no name/note field, no after-recording ▾ in window mode. Window picker listed only 2 windows.
+- Save dialog default name "Recording 17.10.2026 at 14/13" – colon in time shows as "/" in macOS save panel (looks broken). 
+- After cancelling Save dialog: quick export widget appears (Export & Copy / Edit / Bin) – nice fallback but not explained.
+- Device mode with nothing connected: only a system beep; help text only in tooltip.
+- Countdown 10s pill: ✕ (AX "Close") + Continue. ✕ cancels, no project created, but then HOME WINDOW opens (not toolbar). Continue skips to recording ✓. Return in display picker starts recording ✓. Home "Start Recording" starts without display confirm.
+- Restart (control bar) -> immediately back to countdown, no confirmation (could lose a long take by misclick).
+- Clicks: instantaneous synthetic clicks (down/up <8ms) NOT recorded (3 clicks -> 0, REC 14.14.41); 150ms held click recorded (REC 14.15.58, 1 click -> 1 auto zoom). CursorRecorder polls NSEvent.pressedMouseButtons every 8ms -> very short clicks (trackpad tap-to-click / tablets / automation) can be missed => no click effect, no auto-zoom.
+- During 14:14 recording the Finder windows moved off the current Space (cause unclear).
+- ⌥⌘3 (record display shortcut) works; during that recording the HOME window came to front (was it open?) 
+- 14:16 a macOS UserNotificationCenter alert appeared during recording (hidden from screenshots) – asked user.
+- REC E "Recording 17.10.2026 at 14:16" (14.15.58, 24s, 1 zoom) used for editor tests.
+- The 14:16 alert = "Unable to Connect to iPhone – iPhone Mirroring is not available in your country or region" (captured in REC E at ~16s). Appeared ~2 min after I clicked Device mode (no device). Possibly Framecast's device discovery (CoreMediaIO screen-capture devices) triggers iPhone Mirroring. Not a permission.
+- Editor: ⌘1–⌘7 switch panels OK; panel opens keeping previous scroll offset (Cursor opened mid-scroll) (15).
+- Style panel: Wallpaper cats ★/macOS/Aurora/Waves/Glass…, random, Blur, Padding 28%, Corners 16, Shadow 55%, Classic/Directional, softness 40, Inset toggle, Aspect ratio grid.
+- Cursor: styles Classic/As recorded/Thin/High contrast…, size 1.6×, always pointer, hide when not moving, motion blur, loop, click effect, rotation (Off/Tilt/Follow), Advanced, Keystrokes.
+- Zoom panel: default level 2.0×, Disable all zooms, generate / remove all. Animation: Focused/Smooth, Zoom transition 0.9s, Start zooms early, Screen motion blur 60%, cursor animation.
+- ⌘K palette: grouped, shortcuts shown, filter "crop" -> Return opens Crop ✓.
+- Crop: modal with handles, aspect, px size, Reset/Discard/Confirm; header shows "Cropped" ✓ (14).
+- Preview quality menu: Full / Half (faster) – no ✓ on current. Playback speed menu (1×▾) didn't open on click (1 try).
+- Space/J/K/L/arrows ✓ (L twice -> 2×). C cut ✓ with marker. X removes slice but leaves empty gap in timeline; auto-zoom remains over the removed (gap) range (12). ⌘Z ✓.
+- Blade button ✓ (red line on hover, cut, orange marker). ⌥-click didn't cut (synthetic modifier); code reads NSEvent.modifierFlags in a computed property (not observed) -> ⌥ state can be stale until something re-renders.
+- Zoom lane hover ghost "+" ✓, click adds zoom + opens "← Close Zoom editor" (level, Follow/Fixed, Instant animation, Starts/Lasts, Focus timeline, Remove zoom) (13).
+- Zoom block drag ✓ (moved ~75% of drag distance), right-edge resize ✓, clip right-edge trim ✓ (8.8→7.6s).
+- Effect menu: Blur, Spotlight, Text, Hide cursor; camera items disabled without camera ✓.
+- Blur: on-video box with 8 handles, inspector mini area, Blur/Pixelate, Strength 60%. Move & resize on video ✓.
+- BUG: paused preview doesn't redraw after adding/moving an effect – blur showed unblurred, title invisible until playhead moved (2/2) (17).
+- Text: default text = recording name; Top/Center/Bottom/Custom; drag on video switches to Custom ✓; Duplicate, Disable, Focus timeline.
+- Spotlight dims rest ✓. Effect lanes stack; bottom lane clipped by window edge (timeline area doesn't grow/scroll enough).
+- Clip editor: speeds 0.5–24×, "Apply N× to all clips" ✓, Cut at playhead. After speed change, ruler stays in SOURCE time while transport shows edited time (6.1/11.4 vs ruler 0:12) – confusing (18).
+- Undo/redo ✓ (⌘Z/⌘⇧Z).
+- Smart speed idle 4× ✓ (24→8.6s) but leaves tiny 0.3s and unlabeled sliver clips (19).
+- Note popover ✓ ("What is this recording for? Shown in your library").
+- Light mode ✓; effect labels white on pastel = low contrast (Spotlight on yellow) (16).
+- EXPORT window: MP4/GIF; res 720/1080/1440/4K; fps popup 60/50/30/25/24/20/10 (✓ shown); compression 4 chips (Web (Low) now fits, but the row is wider than the others); codec H.264/HEVC; size estimate "1588×1080 · 0:22 · about 35 MB". GIF: width 640/800/960/1280, fps 10/15/20/30, no size estimate; "MP4 Video" keeps blue focus ring while GIF is selected (looks selected). Esc on an open popup closes the whole Export sheet.
+- GIF export 640x436 20fps 22.9s ✓ (my 10fps click didn't register – fps segments small). MP4 export 1588x1080 60fps 22.86s ✓; frames at 3.5/11/12 s match preview (auto zoom, blur, custom-position title, spotlight dims screen) ✓. "Open" opens in QuickTime ✓.
+- Save panel for exports/PNG always starts in ~/Movies (PNG: ~/Pictures), doesn't remember last folder (Exports).
+- Transient temp files (".sb-…", "…oZ2SbQ") visible next to target while exporting; gone afterwards.
+- ⌥⌘C quick export: top-centre toast "Exporting to clipboard…" overlaps "Preview quality" header; file saved as "Recording 17.10.2026 at 14:16.mp4" (colon -> shows as "/" in Finder). No completion toast.
+- ⌥⌘S: save dialog ✓ (cancelled). PNG frame (camera icon) ✓ 2116×1440, default folder Pictures, name "… frame".
+- Mic switched back to MacBook Pro Microphone (original) 14:27. No mic permission prompt.
+- REC F "Recording 17.10.2026 at 14:28" (14.28.11, 11.5s, mic): synthetic speech played via QuickTime; waveform shows in clip ✓. Quick export widget "Edit" opened editor ✓.
+- Captions: language default "English (Australia)" (first alphabetically, not system locale). Generate -> instantly "No speech was found in the audio." (en-AU and en-US). mic.m4a has audio (peak -4.5 dB). No progress shown. Speech auth already granted (no prompt). Could not get cues -> caption editing & .srt export untested. Code swallows "No speech detected" per chunk.
+- After a recording that ended in Save→Cancel, previously open editor windows stayed hidden (off-space) – came back? (check)
+- Clipboard export verified by pasting into TextEdit (video 0:23) ✓. (Left an unsaved "Untitled" TextEdit doc open – my tools refused clicking Delete in its sheet; ask user to discard.)
+- RESTORE: "Hide Dock icon" was ON at 14:30 – I accidentally toggled it at 09:35 via blind Dock-menu keyboard nav ("Show Framecast in Dock" item). Turned OFF again ✓.
+- "When Framecast opens: Home window" -> relaunch shows home ✓; set back to Recording toolbar ✓. Library card shows editor note "QA editor note" ✓.
+- Countdown restored to 3s ✓.
+- Settings window content taller than window: bottom rows (Frame rate / Reset) clipped; needs scrolling but no visible scrollbar until scrolling. Tabs open keeping the previous tab's scroll offset (Shortcuts opened mid-list).
+- Shortcut recorder works (re-recorded flag as ⌃⌥⌘F ✓). BUG: recorder accepted a key it can't name -> showed "⌥⌘" with blank key (my tool's "/" on this layout). So the earlier ⌥⌘/ speaker-notes failure was my keyboard tool, not necessarily the app -> mark NOT VERIFIED. Labels assume US layout (⌥⌘/ on German keyboard is ⌥⌘-).
+- Copy Diagnostics ✓ ("Framecast 1.4.0 (12) / macOS 27.0.1 (26A434) / Mac17,2 · 10 cores · 16 GB").
+- Change Folder… open panel ✓ (Cancel). .framecast bundles show as plain expandable folders in the panel.
+- Reset…: NSAlert "Reset all preferences?" with default button "Reset and Quit" (Return = destructive). Not clicked.
+- Quick export setting "Show quick export widget after recording" is OFF, yet the widget appears after cancelling the after-recording Save dialog.

@@ -13,7 +13,8 @@ final class AppSettings: ObservableObject {
     /// What appears when Framecast opens: the recording toolbar (like a camera app) or the home window.
     @Published var launchView: LaunchView { didSet { d.set(launchView.rawValue, forKey: "app.launchView") } }
     @Published var appearance: AppAppearance { didSet { d.set(appearance.rawValue, forKey: "app.appearance"); applyAppearance() } }
-    @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon() } }
+    @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon(); MenuBarController.shared.update() } }
+    @Published var showMenuBarIcon: Bool { didSet { d.set(showMenuBarIcon, forKey: "app.menuBarIcon"); MenuBarController.shared.update() } }
 
     // Recording
     @Published var projectsFolder: String { didSet { d.set(projectsFolder, forKey: "app.projectsFolder") } }
@@ -49,6 +50,7 @@ final class AppSettings: ObservableObject {
             "app.projectsFolder": movies.appendingPathComponent("Framecast").path,
             "app.highlightArea": true,
             "app.recordingWidget": true,
+            "app.menuBarIcon": true,
             "app.cameraResolution": 1080,
             "app.cameraPreview": true,
             "app.autosave": true,
@@ -61,6 +63,7 @@ final class AppSettings: ObservableObject {
         launchView = LaunchView(rawValue: d.string(forKey: "app.launchView") ?? "") ?? .toolbar
         appearance = AppAppearance(rawValue: d.string(forKey: "app.appearance") ?? "") ?? .dark
         hideDockIcon = d.bool(forKey: "app.hideDock")
+        showMenuBarIcon = d.bool(forKey: "app.menuBarIcon")
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
         highlightRecordedArea = d.bool(forKey: "app.highlightArea")
         showRecordingWidget = d.bool(forKey: "app.recordingWidget")
@@ -341,8 +344,10 @@ struct KeyCombo: Equatable, Hashable {
 
 /// Registers the global shortcuts and routes them to their actions.
 @MainActor
-final class HotKeyCenter {
+final class HotKeyCenter: ObservableObject {
     static let shared = HotKeyCenter()
+    /// Shortcuts macOS refused because another app (Screen Studio, for one) already uses them.
+    @Published private(set) var conflicts: Set<ShortcutAction> = []
     private var refs: [EventHotKeyRef] = []
     private var handlerInstalled = false
     private let signature = OSType(0x46524D43) // "FRMC"
@@ -365,6 +370,7 @@ final class HotKeyCenter {
         }
         for r in refs { UnregisterEventHotKey(r) }
         refs.removeAll()
+        var failed: Set<ShortcutAction> = []
         for (i, action) in ShortcutAction.allCases.enumerated() {
             guard let combo = AppSettings.shared.shortcuts[action] else { continue }
             var ref: EventHotKeyRef?
@@ -372,8 +378,11 @@ final class HotKeyCenter {
             if RegisterEventHotKey(UInt32(combo.keyCode), UInt32(combo.modifiers), id, GetApplicationEventTarget(), 0, &ref) == noErr,
                let ref {
                 refs.append(ref)
+            } else {
+                failed.insert(action)
             }
         }
+        conflicts = failed
     }
 
     /// Global shortcuts are paused while a new shortcut is being recorded in Settings.

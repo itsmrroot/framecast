@@ -116,7 +116,7 @@ struct TitleCanvasOverlay: View {
                 .foregroundStyle(.white)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(dragCenter == nil ? 0.06 : 0)))
                 .frame(width: frame.width + 12, height: frame.height + 12)
-                .offset(x: frame.minX - 6, y: frame.minY - 6)
+                // The hit area must be set before the offset, or it stays at the top-left corner.
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { v in
@@ -141,6 +141,7 @@ struct TitleCanvasOverlay: View {
                         dragCenter = nil
                         model.hiddenEffect = nil
                     })
+                .offset(x: frame.minX - 6, y: frame.minY - 6)
             Label("Drag to move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
                 .font(.system(size: 10.5, weight: .semibold))
                 .padding(.horizontal, 7).padding(.vertical, 3)
@@ -216,7 +217,6 @@ struct ImageCanvasOverlay: View {
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])).foregroundStyle(.white)
                 .background(Color.white.opacity(live == nil ? 0.05 : 0))
                 .frame(width: frame.width, height: frame.height)
-                .offset(x: frame.minX, y: frame.minY)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { v in
@@ -226,6 +226,7 @@ struct ImageCanvasOverlay: View {
                                         y: clamp(s.center.y + v.translation.height, 0, size.height)), s.width)
                     }
                     .onEnded { _ in commit() })
+                .offset(x: frame.minX, y: frame.minY)
             Circle().fill(.white).frame(width: 13, height: 13)
                 .overlay(Circle().strokeBorder(Color.black.opacity(0.25)))
                 .shadow(color: .black.opacity(0.4), radius: 2)

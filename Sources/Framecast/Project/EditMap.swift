@@ -109,9 +109,21 @@ enum ActivityAnalyzer {
     }
 
     /// Pauses in the audio: at least `minLength` seconds below `threshold`, trimmed by `margin` so words aren't clipped.
-    static func silentRanges(waveform: [Float], duration: Double, threshold: Float = 0.05,
+    /// With `threshold` nil, it's set between the room's noise floor and the speech level, so ordinary
+    /// background noise counts as silence.
+    static func silentRanges(waveform: [Float], duration: Double, threshold fixed: Float? = 0.05,
                              minLength: Double = 0.9, margin: Double = 0.2) -> [(Double, Double)] {
         guard waveform.count > 1, duration > 0 else { return [] }
+        let threshold: Float
+        if let fixed {
+            threshold = fixed
+        } else {
+            let sorted = waveform.sorted()
+            let floor = sorted[Int(Double(sorted.count - 1) * 0.1)]
+            let speech = sorted[Int(Double(sorted.count - 1) * 0.9)]
+            guard speech - floor > 0.08 else { return [] } // no clear difference between talking and not
+            threshold = floor + (speech - floor) * 0.3
+        }
         let binDur = duration / Double(waveform.count)
         var ranges: [(Double, Double)] = []
         var start: Int?

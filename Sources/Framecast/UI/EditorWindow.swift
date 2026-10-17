@@ -208,6 +208,17 @@ struct EditorView: View {
             HStack(spacing: 0) {
                 PreviewArea(model: model)
                     .overlay(alignment: .bottom) { quickToast }
+                    .overlay(alignment: .top) {
+                        if let notice = model.notice {
+                            Label(notice, systemImage: "info.circle")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .background(Capsule().fill(Theme.raised).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+                                .padding(.top, 52)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.2), value: model.notice)
                     .animation(.easeOut(duration: 0.2), value: ui.quickStatus)
                 InspectorRail(model: model, ui: ui)
                 InspectorView(model: model, ui: ui)
@@ -573,7 +584,8 @@ private struct TransportBar: View {
                 .help("Preview playback speed (J / K / L)")
             }
             HStack(spacing: 14) {
-                Text(formatTime(model.compTime, fraction: true))
+                // While hovering the timeline: the hovered time (the preview shows that frame), as Screen Studio does.
+                Text(formatTime(model.hoverTime ?? model.compTime, fraction: true))
                     .font(.system(size: 12, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.textDim)
                     .frame(width: 64, alignment: .trailing)
