@@ -9,6 +9,13 @@ struct TimelineView: View {
     /// Pointer position over the clip lane (for the blade line) and the zoom lane (for the add-zoom ghost).
     @State private var clipHoverX: CGFloat?
     @State private var zoomHoverX: CGFloat?
+    /// Pointer position anywhere over the timeline (hover pin and split line).
+    @State private var hoverX: CGFloat?
+    /// Scrolled down: the zoom lane shrinks to a thin strip, as in Screen Studio.
+    @State private var compact = false
+    @State private var hovering = false
+    @State private var scrollTop = true
+    @State private var scrollMonitor: Any?
 
     private var bladeActive: Bool { model.bladeMode || NSEvent.modifierFlags.contains(.option) }
 
@@ -22,8 +29,8 @@ struct TimelineView: View {
 
     private let rulerH: CGFloat = 24
     private let clipH: CGFloat = 60
-    private let zoomH: CGFloat = 40
-    private let effectRowH: CGFloat = 24
+    private var zoomH: CGFloat { compact ? 14 : 40 }
+    private let effectRowH: CGFloat = 34
     private let gap: CGFloat = 8
     private let inset: CGFloat = 18
 
@@ -31,9 +38,12 @@ struct TimelineView: View {
         let rows = effectRows()
         let rowCount = max(1, (rows.values.max() ?? -1) + 1)
         let effectsH = CGFloat(rowCount) * (effectRowH + 3) + 3
-        let zoomY = rulerH + 6 + clipH + gap
+        let zoomY = rulerH + 6 + clipH + gap + (compact ? 14 : 0)
         let effectsY = zoomY + zoomH + gap
         let totalH = effectsY + effectsH + 8
+        // The panel keeps its full height when the lanes compact, so the preview doesn't jump.
+        let fullH = rulerH + 6 + clipH + gap + 40 + gap + effectsH + 8
+        let spring = Animation.spring(response: 0.38, dampingFraction: 0.82)
         return VStack(spacing: 0) {
             header
             GeometryReader { geo in
@@ -49,16 +59,66 @@ struct TimelineView: View {
                             .offset(y: zoomY)
                         effectTrack(width: contentW, pps: pps, rows: rows, height: effectsH)
                             .offset(y: effectsY)
+                        if compact {
+                            laneLabel("Zooms").offset(y: zoomY - 15)
+                                .transition(.opacity)
+                        }
+                        if let x = hoverX, !bladeActive, drag == nil {
+                            HoverPin(height: totalH - 4).offset(x: x - 7).allowsHitTesting(false)
+                        }
                         playhead(pps: pps, height: totalH - 4)
+                        if model.bladeMode {
+                            // Split tool: a click anywhere cuts straight down through every lane.
+                            Color.clear
+                                .frame(width: contentW, height: totalH)
+                                .contentShape(Rectangle())
+                                .gesture(SpatialTapGesture().onEnded { v in model.cut(at: src(v.location.x, pps)) })
+                        }
+                        if bladeActive, let x = hoverX {
+                            BladeLine(height: totalH - 4).offset(x: x - 13).allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
                     }
                     .frame(width: contentW, height: totalH, alignment: .topLeading)
+                    .onContinuousHover { phase in
+                        if case .active(let p) = phase { hoverX = min(max(0, p.x), contentW) } else { hoverX = nil }
+                    }
                     .padding(.horizontal, inset)
                     .padding(.top, 4)
+                    .animation(spring, value: compact)
+                    .animation(.easeOut(duration: 0.15), value: model.bladeMode)
                 }
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y <= 1 } action: { _, top in scrollTop = top }
             }
         }
         // Grows with stacked effect lanes (up to a limit, then scrolls).
-        .frame(height: min(max(38 + totalH + 8, 236), 380))
+        .frame(height: min(max(38 + fullH + 8, 236), 380))
+        .onHover { hovering = $0 }
+        .onAppear(perform: installScrollMonitor)
+        .onDisappear {
+            if let m = scrollMonitor { NSEvent.removeMonitor(m) }
+            scrollMonitor = nil
+        }
+    }
+
+    /// Scrolling down over the timeline compacts the zoom lane; scrolling back up at the top restores it.
+    private func installScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { e in
+            guard hovering, abs(e.scrollingDeltaY) > max(2, abs(e.scrollingDeltaX) * 1.5) else { return e }
+            let down = e.scrollingDeltaY < 0
+            if down && !compact {
+                compact = true
+            } else if !down && compact && scrollTop {
+                compact = false
+            }
+            return e
+        }
+    }
+
+    private func laneLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textDim)
+            .allowsHitTesting(false)
     }
 
     // MARK: Time mapping
@@ -87,7 +147,8 @@ struct TimelineView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            IconButton(icon: "scissors", label: "Split", help: "Split clip at playhead (S)") { model.splitAtPlayhead() }
+            IconButton(icon: "scissors", label: "Split", help: "Split tool: click anywhere on the timeline to cut (S). C cuts at the playhead.",
+                       tint: model.bladeMode ? Theme.accent : Theme.text, active: model.bladeMode) { model.bladeMode.toggle() }
             IconButton(icon: "plus.magnifyingglass", label: "Zoom", help: "Add zoom at playhead (Z)") {
                 model.addZoom(at: model.sourceTime)
             }
@@ -135,6 +196,7 @@ struct TimelineView: View {
     }
 
     private var hint: String {
+        if model.bladeMode { return "Click anywhere on the timeline to split · S or Esc to stop" }
         switch model.selection {
         case .zoom: return "Drag to move · drag edges to resize · ⌫ to delete"
         case .clip: return "Drag edges to trim · change speed in the inspector · ⌫ to cut"
@@ -170,7 +232,7 @@ struct TimelineView: View {
 
     private func tickStep(_ pps: CGFloat) -> Double {
         let steps: [Double] = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
-        return steps.first { CGFloat($0) * pps >= 70 } ?? 600
+        return steps.first { CGFloat($0) * pps >= 90 } ?? 600
     }
 
     private func ruler(width: CGFloat, pps: CGFloat) -> some View {
@@ -178,25 +240,28 @@ struct TimelineView: View {
         let duration = map.duration
         let map = map
         return Canvas { ctx, size in
+            // Labels with a dot under each, and a dot halfway between (Screen Studio's ruler).
             var t = 0.0
             while t <= duration + 0.0001 {
                 let x = CGFloat(t) * pps
-                ctx.fill(Path(CGRect(x: x, y: size.height - 8, width: 1, height: 8)), with: .color(Theme.textFaint))
-                ctx.draw(Text(formatTime(t, fraction: step < 1)).font(.system(size: 10).monospacedDigit()).foregroundColor(Theme.textDim),
-                         at: CGPoint(x: x + 4, y: size.height - 14), anchor: .leading)
-                for k in 1..<5 {
-                    let mx = CGFloat(t + step * Double(k) / 5) * pps
-                    if mx > size.width { break }
-                    ctx.fill(Path(CGRect(x: mx, y: size.height - 4, width: 1, height: 4)), with: .color(Theme.textFaint.opacity(0.6)))
+                if t > 0 {
+                    ctx.draw(Text(formatTime(t, fraction: step < 1)).font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                                .foregroundColor(Theme.textDim),
+                             at: CGPoint(x: x, y: size.height - 13), anchor: .center)
+                    ctx.fill(Path(ellipseIn: CGRect(x: x - 1.5, y: size.height - 4, width: 3, height: 3)), with: .color(Theme.textFaint))
+                }
+                let mid = CGFloat(t + step / 2) * pps
+                if mid < size.width {
+                    ctx.fill(Path(ellipseIn: CGRect(x: mid - 1.5, y: size.height - 4, width: 3, height: 3)), with: .color(Theme.textFaint))
                 }
                 t += step
             }
             // Scissors badges at every cut or split, where one clip meets the next.
             for seg in map.segments.dropFirst() {
                 let x = CGFloat(seg.compStart) * pps
-                let badge = CGRect(x: x - 7, y: 1, width: 14, height: 14)
-                ctx.fill(Path(ellipseIn: badge), with: .color(Theme.clip))
-                ctx.draw(Image(systemName: "scissors").resizable(), in: badge.insetBy(dx: 3, dy: 3))
+                let pin = CGRect(x: x - 9, y: 0, width: 18, height: 18)
+                ctx.fill(PinShape().path(in: pin.insetBy(dx: 0, dy: -2).offsetBy(dx: 0, dy: 2)), with: .color(Theme.clipPin))
+                ctx.draw(Image(systemName: "scissors").resizable(), in: CGRect(x: x - 5, y: 4, width: 10, height: 9))
             }
             for f in model.doc.flags where map.isKept(source: f) {
                 let x = CGFloat(map.compTime(source: f)) * pps
@@ -259,11 +324,9 @@ struct TimelineView: View {
                     .allowsHitTesting(false)
             }
 
-            if let x = clipHoverX, bladeActive {
-                Rectangle().fill(Color.red).frame(width: 2, height: clipH + 8)
-                    .offset(x: x - 1, y: -4)
-                    .allowsHitTesting(false)
-            }
+            secondLines(width: width, pps: pps)
+                .frame(width: width, height: clipH)
+                .allowsHitTesting(false)
         }
         .frame(width: width, height: clipH, alignment: .topLeading)
         .onContinuousHover { phase in
@@ -276,19 +339,21 @@ struct TimelineView: View {
         let (cs, ce) = clipSpan(c)
         let selected = model.selection == .clip(c.id)
         let w = max(2, CGFloat(ce - cs) * pps)
-        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+        return RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(selected ? Theme.clipGradientSelected : Theme.clipGradient)
             .overlay(
-                // A light top edge makes the block look lit from above.
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(selected ? 0.9 : 0.28), Color.white.opacity(selected ? 0.9 : 0.04)],
-                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 2 : 1)
+                // A gold rim, brighter along the bottom, like light coming from below.
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? AnyShapeStyle(Color.white.opacity(0.9))
+                                           : AnyShapeStyle(LinearGradient(colors: [Theme.clipRim.opacity(0.55), Theme.clipRim],
+                                                                          startPoint: .top, endPoint: .bottom)),
+                                  lineWidth: selected ? 2 : 1)
             )
-            .shadow(color: Theme.clip.opacity(selected ? 0.45 : 0.18), radius: selected ? 8 : 4, y: 2)
+            .shadow(color: Theme.clip.opacity(selected ? 0.4 : 0.12), radius: selected ? 8 : 3, y: 1)
             .overlay {
                 if w > 60 {
-                    VStack(spacing: 1) {
-                        Text("Clip").font(.system(size: 10.5, weight: .medium)).opacity(0.45)
+                    VStack(spacing: 2) {
+                        Text("Clip").font(.system(size: 11, weight: .medium)).opacity(0.32)
                         HStack(spacing: 4) {
                             Text(String(format: "%.1fs", (e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
                             if w > 110 {
@@ -308,7 +373,7 @@ struct TimelineView: View {
             .gesture(SpatialTapGesture().onEnded { v in
                 let t = min(e, s + Double(v.location.x / pps) * c.speed)
                 if bladeActive {
-                    model.split(at: t)
+                    model.cut(at: t)
                 } else {
                     model.selection = .clip(c.id)
                     model.seek(source: t)
@@ -460,18 +525,25 @@ struct TimelineView: View {
         let (cs, ce) = span(s, e)
         let selected = model.selection == .zoom(z.id)
         let w = max(4, CGFloat(ce - cs) * pps)
-        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let radius: CGFloat = compact ? 7 : 10
+        return RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(selected ? Theme.zoomGradientSelected : Theme.zoomGradient)
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [Color(red: 0.75, green: 0.7, blue: 1).opacity(selected ? 1 : 0.55),
-                                                          Color(red: 0.75, green: 0.7, blue: 1).opacity(selected ? 1 : 0.15)],
-                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 2 : 1)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(selected ? Theme.zoomRim : Theme.zoomRim.opacity(0.28), lineWidth: selected ? 2 : 1)
             )
-            .shadow(color: Theme.zoom.opacity(selected ? 0.6 : 0.3), radius: selected ? 10 : 5, y: 2)
+            // Selected: a second, outer ring, as Screen Studio draws it.
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: radius + 3, style: .continuous)
+                        .strokeBorder(Theme.zoomRim.opacity(0.55), lineWidth: 1)
+                        .padding(-3)
+                }
+            }
+            .shadow(color: Theme.zoom.opacity(selected ? 0.55 : 0.15), radius: selected ? 10 : 3, y: 1)
             .opacity(model.doc.style.zoomsDisabled ? 0.4 : 1)
             .overlay {
-                if w > 54 {
+                if w > 54 && !compact {
                     VStack(spacing: 1) {
                         if w > 90 {
                             Text(z.instant ? "Instant zoom" : (z.isAuto ? "Auto zoom" : "Zoom"))
@@ -487,7 +559,7 @@ struct TimelineView: View {
                             }
                         }
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.white.opacity(selected ? 1 : 0.62))
                     .lineLimit(1)
                 }
             }
@@ -608,29 +680,7 @@ struct TimelineView: View {
         let w = max(4, CGFloat(ce - cs) * pps)
         let color = TimelineView.effectColor(e.kind)
         let title = e.kind == .text ? e.text : e.kind.label
-        return RoundedRectangle(cornerRadius: 7, style: .continuous)
-            // Opaque fills, so labels stay readable on the light background too.
-            .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.05 : 0.18), color.mix(with: .black, by: selected ? 0 : 0.06)],
-                                 startPoint: .top, endPoint: .bottom))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(selected ? 0.9 : 0.3), Color.white.opacity(selected ? 0.9 : 0.05)],
-                                                 startPoint: .top, endPoint: .bottom), lineWidth: selected ? 1.5 : 1)
-            )
-            .shadow(color: color.opacity(selected ? 0.5 : 0.2), radius: selected ? 6 : 3, y: 1)
-            .opacity(e.disabled ? 0.4 : 1)
-            .overlay(alignment: .leading) {
-                if w > 30 {
-                    HStack(spacing: 4) {
-                        Image(systemName: e.disabled ? "eye.slash" : e.kind.icon).font(.system(size: 10, weight: .semibold))
-                        if w > 70 { Text(title).font(.system(size: 10.5, weight: .semibold)) }
-                    }
-                    .foregroundStyle(TimelineView.effectLabelColor(e.kind))
-                    .shadow(color: .black.opacity(e.kind == .spotlight ? 0 : 0.3), radius: 1, y: 1)
-                    .padding(.leading, 8)
-                    .lineLimit(1)
-                }
-            }
+        return effectFace(e, selected: selected, w: w, color: color, title: title)
             .contentShape(Rectangle())
             .onTapGesture {
                 model.selection = .effect(e.id)
@@ -665,6 +715,33 @@ struct TimelineView: View {
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
+    private func effectFace(_ e: EffectSegment, selected: Bool, w: CGFloat, color: Color, title: String) -> some View {
+        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+            // Deep, opaque fills lit from below with a lighter rim (labels stay readable in light mode too).
+            .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.32 : 0.45), color.mix(with: .black, by: selected ? 0.18 : 0.32)],
+                                 startPoint: .top, endPoint: .bottom))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(selected ? Color.white.opacity(0.9) : color.opacity(0.75), lineWidth: selected ? 2 : 1)
+            )
+            .shadow(color: color.opacity(selected ? 0.45 : 0.12), radius: selected ? 8 : 3, y: 1)
+            .opacity(e.disabled ? 0.4 : 1)
+            .overlay {
+                if w > 30 {
+                    VStack(spacing: 1) {
+                        if w > 90 && title != e.kind.label { Text(e.kind.label).font(.system(size: 10, weight: .medium)).opacity(0.38) }
+                        HStack(spacing: 4) {
+                            Image(systemName: e.disabled ? "eye.slash" : e.kind.icon).font(.system(size: 10, weight: .semibold))
+                            if w > 70 { Text(title).font(.system(size: 11.5, weight: .semibold)) }
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .lineLimit(1)
+                }
+            }
+    }
+
     // MARK: Shared
 
     private func edgeHandle(color: Color, visible: Bool, onDrag: @escaping (CGFloat, Bool) -> Void) -> some View {
@@ -674,16 +751,29 @@ struct TimelineView: View {
     private func playhead(pps: CGFloat, height: CGFloat) -> some View {
         let x = CGFloat(model.compTime) * pps
         return ZStack(alignment: .top) {
-            Rectangle().fill(Theme.text).frame(width: 2, height: height)
-            Image(systemName: "arrowtriangle.down.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.text)
-                .offset(y: -4)
+            Rectangle().fill(Theme.playhead).frame(width: 1.5, height: height)
+            Circle().fill(Theme.playhead).frame(width: 13, height: 13)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.25)))
+                .offset(y: -3)
         }
         .frame(width: 14, height: height)
         .offset(x: x - 7)
-        .shadow(color: .black.opacity(0.6), radius: 3)
+        .shadow(color: Theme.playhead.opacity(0.6), radius: 4)
         .allowsHitTesting(false)
+    }
+
+    /// Faint lines through the clips at each labelled second.
+    private func secondLines(width: CGFloat, pps: CGFloat) -> some View {
+        let step = tickStep(pps)
+        let duration = map.duration
+        return Canvas { ctx, size in
+            var t = step
+            while t < duration {
+                let x = CGFloat(t) * pps
+                ctx.fill(Path(CGRect(x: x, y: 6, width: 1, height: size.height - 12)), with: .color(Color.white.opacity(0.1)))
+                t += step
+            }
+        }
     }
 }
 
@@ -705,5 +795,45 @@ private struct EdgeHandle: View {
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { v in onDrag(v.translation.width, false) }
                 .onEnded { v in onDrag(v.translation.width, true) })
+    }
+}
+
+/// A map-pin shape: a circle with a point at the bottom.
+struct PinShape: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        let d = r.width
+        let c = CGPoint(x: r.midX, y: r.minY + d / 2)
+        p.addArc(center: c, radius: d / 2, startAngle: .degrees(140), endAngle: .degrees(40), clockwise: false)
+        p.addLine(to: CGPoint(x: r.midX, y: r.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Where the pointer is on the timeline: a dim pin and line.
+private struct HoverPin: View {
+    let height: CGFloat
+    var body: some View {
+        ZStack(alignment: .top) {
+            Rectangle().fill(Theme.fill.opacity(0.18)).frame(width: 1, height: height)
+            PinShape().fill(Theme.hoverPin).frame(width: 12, height: 15).offset(y: -3)
+        }
+        .frame(width: 14, height: height)
+    }
+}
+
+/// The split tool's cut line: red, through every lane, with a scissors pin in the ruler.
+private struct BladeLine: View {
+    let height: CGFloat
+    var body: some View {
+        ZStack(alignment: .top) {
+            Rectangle().fill(Theme.blade).frame(width: 1.5, height: height)
+            PinShape().fill(Theme.clipPin).frame(width: 24, height: 30)
+                .overlay(Image(systemName: "scissors").font(.system(size: 10, weight: .bold)).foregroundStyle(.black.opacity(0.8)).offset(y: -3))
+                .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+                .offset(y: -6)
+        }
+        .frame(width: 26, height: height)
     }
 }

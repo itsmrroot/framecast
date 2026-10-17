@@ -38,14 +38,21 @@ enum Theme {
     static let zoom = Color(red: 0.42, green: 0.34, blue: 0.98)
     static let clip = Color(red: 0.86, green: 0.6, blue: 0.2)
     /// Lit gradients for timeline blocks: darker at the top, glowing at the bottom.
-    static let clipGradient = LinearGradient(colors: [Color(red: 0.52, green: 0.35, blue: 0.11), Color(red: 0.80, green: 0.56, blue: 0.21)],
+    // Timeline blocks, matched to Screen Studio: darker at the top, glowing toward the bottom.
+    static let clipGradient = LinearGradient(colors: [Color(red: 0.53, green: 0.37, blue: 0.14), Color(red: 0.76, green: 0.54, blue: 0.22)],
                                              startPoint: .top, endPoint: .bottom)
-    static let clipGradientSelected = LinearGradient(colors: [Color(red: 0.62, green: 0.43, blue: 0.14), Color(red: 0.90, green: 0.64, blue: 0.25)],
+    static let clipGradientSelected = LinearGradient(colors: [Color(red: 0.60, green: 0.43, blue: 0.17), Color(red: 0.85, green: 0.62, blue: 0.27)],
                                                      startPoint: .top, endPoint: .bottom)
-    static let zoomGradient = LinearGradient(colors: [Color(red: 0.27, green: 0.18, blue: 0.88), Color(red: 0.46, green: 0.37, blue: 1.0)],
+    static let clipRim = Color(red: 0.86, green: 0.64, blue: 0.29)
+    static let clipPin = Color(red: 0.91, green: 0.64, blue: 0.24)
+    static let zoomGradient = LinearGradient(colors: [Color(red: 0.15, green: 0.13, blue: 0.40), Color(red: 0.19, green: 0.16, blue: 0.52)],
                                              startPoint: .top, endPoint: .bottom)
-    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.33, green: 0.23, blue: 0.95), Color(red: 0.53, green: 0.45, blue: 1.0)],
+    static let zoomGradientSelected = LinearGradient(colors: [Color(red: 0.33, green: 0.25, blue: 0.93), Color(red: 0.47, green: 0.40, blue: 1.0)],
                                                      startPoint: .top, endPoint: .bottom)
+    static let zoomRim = Color(red: 0.78, green: 0.74, blue: 1.0)
+    static let playhead = Color(red: 0.33, green: 0.25, blue: 0.95)
+    static let hoverPin = Color(nsColor: adaptive(light: NSColor(white: 0.55, alpha: 1), dark: NSColor(white: 0.3, alpha: 1)))
+    static let blade = Color(red: 0.95, green: 0.3, blue: 0.27)
     static let record = Color(red: 1.0, green: 0.27, blue: 0.3)
     static let text = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.87), dark: NSColor(white: 1, alpha: 0.92)))
     static let textDim = Color(nsColor: adaptive(light: NSColor(white: 0, alpha: 0.55), dark: NSColor(white: 1, alpha: 0.55)))
@@ -223,6 +230,8 @@ struct IconButton: View {
     var help: String = ""
     var tint: Color = Theme.text
     var disabled = false
+    /// A tool that stays on (like the split tool): drawn with a tinted background.
+    var active = false
     let action: () -> Void
     @State private var hover = false
 
@@ -234,7 +243,8 @@ struct IconButton: View {
             }
             .padding(.horizontal, label == nil ? 0 : 9)
             .frame(minWidth: 28, minHeight: 26)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hover && !disabled ? Theme.hover : Color.clear))
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(active ? Theme.accent.opacity(0.2) : (hover && !disabled ? Theme.hover : Color.clear)))
             .foregroundStyle(disabled ? Theme.textFaint : tint)
             .contentShape(Rectangle())
         }

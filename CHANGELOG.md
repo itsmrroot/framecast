@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0
+
+**Timeline**
+- The split tool works like Screen Studio's: turn it on with the scissors (or S) and it stays on. A red line with a scissors pin follows the pointer, and each click cuts straight through the clip, zooms and effects. Click the scissors again, or press S or Esc, to stop. C still cuts at the playhead
+- New colours and light, matched to Screen Studio: gold clips lit from below, dark zooms that glow violet with a double ring when selected, deeper effect colours, a blue playhead pin, a pin that follows the pointer, and a dotted ruler
+- Scroll down over the timeline and the zoom lane folds into a thin strip; scroll back up to open it. Lane changes animate smoothly
+- Effects show their type and name, like clips and zooms
+
+**Titles**
+- Dragging a title on the video is instant: it follows the pointer exactly, with no delay
+- Click a title, blur or spotlight on the video to select and edit it
+
 ## 1.6.0
 
 **Titles you can style**

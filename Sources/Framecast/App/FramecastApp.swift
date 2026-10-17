@@ -171,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let c = WindowManager.shared.activeEditorController ?? WindowManager.shared.anyEditorController else { return }
                     if v == "crop" { c.showCrop() }
                     if v == "palette" { c.showPalette() }
+                    if v == "blade" { c.model.bladeMode = true }
                     if v.hasPrefix("panel:"), let tab = InspectorTab(rawValue: String(v.dropFirst(6))) { c.showPanel(tab) }
                     if v.hasPrefix("select:"), let kind = EffectKind(rawValue: String(v.dropFirst(7))),
                        let e = c.model.doc.effects.first(where: { $0.kind == kind }) {

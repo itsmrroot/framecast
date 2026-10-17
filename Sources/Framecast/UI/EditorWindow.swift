@@ -100,8 +100,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             PaletteCommand(id: "start", group: "Playback", title: "Go to start", icon: "backward.end", shortcut: "Home") { m.seek(comp: 0) },
             PaletteCommand(id: "loop", group: "Playback", title: "Loop playback", icon: "repeat", isOn: m.loopPlayback) { m.loopPlayback.toggle() },
             PaletteCommand(id: "split", group: "Timeline", title: "Cut clip at playhead", icon: "scissors", shortcut: "C") { m.splitAtPlayhead() },
-            PaletteCommand(id: "blade", group: "Timeline", title: "Blade tool", icon: "scissors.circle", shortcut: "hold ⌥",
-                           hint: "Click the clip lane to cut", isOn: m.bladeMode) { m.bladeMode.toggle() },
+            PaletteCommand(id: "blade", group: "Timeline", title: "Split tool", icon: "scissors.circle", shortcut: "S",
+                           hint: "Click anywhere on the timeline to cut; hold ⌥ for a quick cut", isOn: m.bladeMode) { m.bladeMode.toggle() },
             PaletteCommand(id: "slice", group: "Timeline", title: "Remove slice before playhead", icon: "scissors.badge.ellipsis", shortcut: "X") { m.removeSliceBefore() },
             PaletteCommand(id: "resetSpeed", group: "Timeline", title: "Reset all speeds to 1×", icon: "gauge.with.dots.needle.33percent") { m.resetSpeeds() },
             PaletteCommand(id: "idle4", group: "Smart speed", title: "Speed up idle moments 4×", icon: "hare") { m.applySmartSpeed(.idle, speed: 4) },
@@ -152,7 +152,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             switch Int(event.keyCode) {
             case kVK_Space:
                 self.model.togglePlay(); return nil
-            case kVK_ANSI_S, kVK_ANSI_C:
+            case kVK_ANSI_S:
+                self.model.bladeMode.toggle(); return nil
+            case kVK_ANSI_C:
                 self.model.splitAtPlayhead(); return nil
             case kVK_ANSI_X:
                 self.model.removeSliceBefore(); return nil
@@ -175,7 +177,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             case kVK_RightArrow:
                 self.model.step(frames: 1); return nil
             case kVK_Escape:
-                self.model.selection = .none; return nil
+                if self.model.bladeMode { self.model.bladeMode = false } else { self.model.selection = .none }
+                return nil
             case kVK_Home:
                 self.model.seek(comp: 0); return nil
             default:
@@ -494,7 +497,18 @@ private struct PreviewArea: View {
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
-                        .onTapGesture { model.togglePlay() }
+                        // Click a title or blur/spotlight area to edit it; anywhere else plays or pauses.
+                        .gesture(SpatialTapGesture().onEnded { v in
+                            let size = CGSize(width: max(1, fit.width), height: max(1, fit.height))
+                            if let e = PreviewHitTest.effect(at: v.location, model: model, size: size) {
+                                model.player.pause()
+                                model.selection = .effect(e.id)
+                            } else if model.selection != .none, case .effect = model.selection {
+                                model.selection = .none
+                            } else {
+                                model.togglePlay()
+                            }
+                        })
                     // Edit the selected blur / spotlight area or title right on the video (while paused).
                     if !model.isPlaying, let e = model.selectedEffect, !e.disabled {
                         let size = CGSize(width: max(1, fit.width), height: max(1, fit.height))
@@ -536,9 +550,10 @@ private struct TransportBar: View {
     var body: some View {
         ZStack {
             HStack {
-                IconButton(icon: model.bladeMode ? "scissors.circle.fill" : "scissors",
-                           help: "Blade tool: click the clip lane to cut (or hold ⌥). C cuts at the playhead.",
-                           tint: model.bladeMode ? Theme.accent : Theme.text) { model.bladeMode.toggle() }
+                IconButton(icon: "scissors",
+                           help: "Split tool: click anywhere on the timeline to cut, until you turn it off (S). C cuts at the playhead.",
+                           tint: model.bladeMode ? Theme.accent : Theme.text, active: model.bladeMode) { model.bladeMode.toggle() }
+                    .accessibilityLabel(model.bladeMode ? "Turn off split tool" : "Split tool")
                 Spacer()
                 IconButton(icon: "camera", help: "Save this frame as an image") { saveFrame() }
                     .disabled(!model.isReady)

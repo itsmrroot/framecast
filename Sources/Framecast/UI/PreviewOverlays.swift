@@ -82,49 +82,91 @@ struct RegionCanvasOverlay: View {
     }
 }
 
-/// Drag a title anywhere on the canvas (switches it to a custom position).
+/// Drag a title anywhere on the canvas (switches it to a custom position). While dragging, the title is drawn
+/// here, under the pointer, and the renderer leaves it out, so it follows without lag.
 struct TitleCanvasOverlay: View {
     @ObservedObject var model: EditorModel
     let effect: EffectSegment
     let size: CGSize
     @State private var startCenter: CGPoint?
+    @State private var dragCenter: CGPoint?
 
     var body: some View {
-        let frame = cardFrame()
+        let base = Self.cardFrame(effect, size: size)
+        let frame = dragCenter.map { c in
+            CGRect(x: c.x - base.width / 2, y: c.y - base.height / 2, width: base.width, height: base.height)
+        } ?? base
         ZStack(alignment: .topLeading) {
+            if dragCenter != nil, let img = Self.liveImage(effect, size: size) {
+                Group {
+                    if effect.titleStyle.card == .glass {
+                        Image(decorative: img, scale: 2)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: min(frame.height / 2, 26 * min(size.width, size.height) / 1080 * CGFloat(effect.textSize)), style: .continuous))
+                    } else {
+                        Image(decorative: img, scale: 2)
+                    }
+                }
+                .frame(width: frame.width, height: frame.height)
+                .shadow(color: .black.opacity(effect.titleStyle.card == .none ? 0 : 0.3), radius: 14, y: 6)
+                .offset(x: frame.minX, y: frame.minY)
+                .allowsHitTesting(false)
+            }
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                 .foregroundStyle(.white)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(dragCenter == nil ? 0.06 : 0)))
                 .frame(width: frame.width + 12, height: frame.height + 12)
                 .offset(x: frame.minX - 6, y: frame.minY - 6)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { v in
+                        if startCenter == nil {
+                            startCenter = CGPoint(x: frame.midX, y: frame.midY)
+                            model.hiddenEffect = effect.id
+                        }
+                        guard let c = startCenter else { return }
+                        // Keep the card on the canvas, as the renderer does.
+                        let x = clamp(c.x + v.translation.width, base.width / 2, max(base.width / 2, size.width - base.width / 2))
+                        let y = clamp(c.y + v.translation.height, base.height / 2, max(base.height / 2, size.height - base.height / 2))
+                        dragCenter = CGPoint(x: x, y: y)
+                    }
+                    .onEnded { _ in
+                        if let c = dragCenter {
+                            let nx = clamp(Double(c.x / size.width), 0, 1), ny = clamp(Double(c.y / size.height), 0, 1)
+                            model.updateEffect(effect.id, coalesce: "titlepos-\(effect.id)") {
+                                $0.placement = .custom; $0.textX = nx; $0.textY = ny
+                            }
+                        }
+                        startCenter = nil
+                        dragCenter = nil
+                        model.hiddenEffect = nil
+                    })
             Label("Drag to move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
                 .font(.system(size: 10.5, weight: .semibold))
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Capsule().fill(Color.black.opacity(0.6)))
                 .foregroundStyle(.white)
                 .offset(x: frame.minX - 6, y: max(0, frame.minY - 30))
+                .allowsHitTesting(false)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 1)
-            .onChanged { v in
-                if startCenter == nil { startCenter = CGPoint(x: frame.midX, y: frame.midY) }
-                guard let c = startCenter else { return }
-                let nx = clamp(Double((c.x + v.translation.width) / size.width), 0, 1)
-                let ny = clamp(Double((c.y + v.translation.height) / size.height), 0, 1)
-                model.updateEffect(effect.id, coalesce: "titlepos-\(effect.id)") {
-                    $0.placement = .custom; $0.textX = nx; $0.textY = ny
-                }
-            }
-            .onEnded { _ in startCenter = nil })
+        .onDisappear { if model.hiddenEffect == effect.id { model.hiddenEffect = nil } }
+    }
+
+    private static func fontSize(_ e: EffectSegment, size: CGSize) -> CGFloat {
+        58 * min(size.width, size.height) / 1080 * CGFloat(e.textSize)
+    }
+
+    /// The title at 2× the view size, for a sharp live preview.
+    private static func liveImage(_ e: EffectSegment, size: CGSize) -> CGImage? {
+        FrameRenderer.shared.text.title(e.text.isEmpty ? " " : e.text, subtitle: e.subtitle, style: e.titleStyle,
+                                        fontSize: fontSize(e, size: size) * 2, maxWidth: size.width * 0.82 * 2).cgImage
     }
 
     /// Where the title card sits on the canvas (top-left view coordinates), matching the renderer.
-    private func cardFrame() -> CGRect {
-        let unit = min(size.width, size.height) / 1080
+    static func cardFrame(_ effect: EffectSegment, size: CGSize) -> CGRect {
         let img = FrameRenderer.shared.text.title(effect.text.isEmpty ? " " : effect.text, subtitle: effect.subtitle,
-                                                  style: effect.titleStyle, fontSize: 58 * unit * CGFloat(effect.textSize),
+                                                  style: effect.titleStyle, fontSize: fontSize(effect, size: size),
                                                   maxWidth: size.width * 0.82).image
         let w = img.extent.width, h = img.extent.height
         let margin = min(size.width, size.height) * 0.08
@@ -144,5 +186,21 @@ struct TitleCanvasOverlay: View {
             y = min(max(0, CGFloat(effect.textY) * size.height - h / 2), size.height - h)
         }
         return CGRect(x: x, y: y, width: w, height: h)
+    }
+}
+
+enum PreviewHitTest {
+    /// The effect under a click on the preview (top-left view point): titles first, then blur/spotlight areas.
+    @MainActor
+    static func effect(at p: CGPoint, model: EditorModel, size: CGSize) -> EffectSegment? {
+        let t = model.sourceTime
+        let active = model.doc.effects.filter { !$0.disabled && t >= $0.start && t <= $0.end }
+        if let title = active.last(where: { $0.kind == .text && !$0.text.isEmpty
+            && TitleCanvasOverlay.cardFrame($0, size: size).insetBy(dx: -6, dy: -6).contains(p) }) {
+            return title
+        }
+        guard let rm = model.renderModel else { return nil }
+        let vt = FrameRenderer.shared.viewTransform(model: rm, sourceTime: t, size: size)
+        return active.last { $0.kind.hasRegion && vt.viewRect(fullFrame: $0.region, crop: rm.crop, canvasHeight: size.height).contains(p) }
     }
 }

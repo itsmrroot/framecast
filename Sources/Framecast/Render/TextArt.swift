@@ -33,6 +33,8 @@ final class TextArt: @unchecked Sendable {
     struct Title {
         let image: CIImage
         let radius: CGFloat
+        /// The same pixels, for drawing in SwiftUI (live drag preview).
+        var cgImage: CGImage? = nil
     }
 
     private let lock = NSLock()
@@ -152,7 +154,7 @@ final class TextArt: @unchecked Sendable {
         let framePath = CGPath(rect: CGRect(x: padX, y: padY, width: textSize.width, height: textSize.height), transform: nil)
         CTFrameDraw(CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), framePath, nil), ctx)
         guard let cg = ctx.makeImage() else { return Title(image: .empty(), radius: radius) }
-        return Title(image: CIImage(cgImage: cg), radius: radius)
+        return Title(image: CIImage(cgImage: cg), radius: radius, cgImage: cg)
     }
 
     private func hairline(_ ctx: CGContext, rect: CGRect, radius: CGFloat, alpha: CGFloat) {

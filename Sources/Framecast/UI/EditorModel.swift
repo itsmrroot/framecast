@@ -36,6 +36,8 @@ final class EditorModel: ObservableObject {
     @Published private(set) var waveform: [Float] = []
     /// Blade tool: clicking the clip lane cuts there.
     @Published var bladeMode = false
+    /// An effect being dragged on the preview: the overlay draws it live, so the renderer leaves it out.
+    @Published var hiddenEffect: UUID? { didSet { if hiddenEffect != oldValue { scheduleRenderRefresh() } } }
     @Published var loopPlayback = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
@@ -246,7 +248,8 @@ final class EditorModel: ObservableObject {
         RenderModel(style: doc.style, info: doc.info, editMap: editMap, zooms: doc.zooms,
                     cursorPath: cursorPath(), cursorTrack: cursorTrack, cursorImages: cursorImages,
                     screenTrackID: built.screenTrackID, webcamTrackID: doc.style.camera.visible ? built.webcamTrackID : nil,
-                    effects: doc.effects, captions: doc.captions, keys: keys)
+                    effects: hiddenEffect.map { id in doc.effects.filter { $0.id != id } } ?? doc.effects,
+                    captions: doc.captions, keys: keys)
     }
 
     private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
@@ -543,6 +546,34 @@ final class EditorModel: ObservableObject {
 
     func applySpeedToAll(_ speed: Double) {
         edit(.timeline) { d in d.clips = d.clips.map { var c = $0; c.speed = speed; return c } }
+    }
+
+    /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    func cut(at t: Double) {
+        let minPiece = 0.15
+        let hitsClip = doc.clips.contains { t > $0.start + minPiece && t < $0.end - minPiece }
+        let hitsZoom = doc.zooms.contains { t > $0.start + minPiece && t < $0.end - minPiece }
+        let hitsEffect = doc.effects.contains { t > $0.start + minPiece && t < $0.end - minPiece }
+        guard hitsClip || hitsZoom || hitsEffect else { NSSound.beep(); return }
+        edit(.timeline) { d in
+            if let i = d.clips.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) {
+                var a = d.clips[i], b = a
+                a.end = t; b.id = UUID(); b.start = t
+                d.clips.replaceSubrange(i...i, with: [a, b])
+            }
+            if let i = d.zooms.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) {
+                var a = d.zooms[i], b = a
+                a.end = t; a.isAuto = false
+                b.id = UUID(); b.start = t; b.isAuto = false
+                d.zooms.replaceSubrange(i...i, with: [a, b])
+            }
+            for i in d.effects.indices.reversed() where t > d.effects[i].start + minPiece && t < d.effects[i].end - minPiece {
+                var a = d.effects[i], b = a
+                a.end = t; b.id = UUID(); b.start = t
+                d.effects.replaceSubrange(i...i, with: [a, b])
+            }
+        }
+        selection = .none
     }
 
     /// Splits the clip under a source time (the blade tool).
