@@ -960,7 +960,11 @@ private struct EffectDetail: View {
                             TextField("Title", text: binding(\.text, key: "text"), axis: .vertical)
                                 .textFieldStyle(.roundedBorder)
                                 .lineLimit(1...4)
+                            TextField("Subtitle (optional)", text: binding(\.subtitle, key: "subtitle"), axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .lineLimit(1...3)
                         }
+                        TitleStyleEditor(style: binding(\.titleStyle, key: "tstyle"))
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Position").font(.system(size: 12))
                             PillPicker(options: TextPlacement.allCases, selection: binding(\.placement, key: "place"), label: \.label)

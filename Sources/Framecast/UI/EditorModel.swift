@@ -489,6 +489,8 @@ final class EditorModel: ObservableObject {
         let length = kind == .text ? 3.0 : (kind.needsCamera ? 4.0 : 3.0)
         var e = EffectSegment(kind: kind, start: start, end: min(sourceDuration, start + length))
         if kind == .text, doc.effects.filter({ $0.kind == .text }).isEmpty { e.text = doc.name }
+        // New titles match the look of the last one, so a video's titles stay consistent.
+        if kind == .text, let last = doc.effects.last(where: { $0.kind == .text }) { e.titleStyle = last.titleStyle }
         edit(.render) { $0.effects.append(e) }
         selection = .effect(e.id)
     }

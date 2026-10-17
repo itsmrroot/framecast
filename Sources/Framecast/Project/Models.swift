@@ -138,6 +138,103 @@ enum TextPlacement: String, Codable, CaseIterable, Identifiable {
     var label: String { rawValue.capitalized }
 }
 
+// MARK: - Title styling
+
+/// Apple's system typefaces (and widths of SF Pro), so titles look at home on a Mac.
+enum TitleFont: String, Codable, CaseIterable, Identifiable {
+    case system, rounded, serif, mono, condensed, expanded
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "SF Pro"
+        case .rounded: return "Rounded"
+        case .serif: return "New York"
+        case .mono: return "SF Mono"
+        case .condensed: return "Condensed"
+        case .expanded: return "Expanded"
+        }
+    }
+}
+
+enum TitleWeight: String, Codable, CaseIterable, Identifiable {
+    case regular, medium, semibold, bold, heavy
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+}
+
+/// What sits behind the title text.
+enum TitleCard: String, Codable, CaseIterable, Identifiable {
+    case light, dark, glass, color, none
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .light: return "Light"
+        case .dark: return "Dark"
+        case .glass: return "Glass"
+        case .color: return "Color"
+        case .none: return "None"
+        }
+    }
+}
+
+enum TitleAlign: String, Codable, CaseIterable, Identifiable {
+    case left, center, right
+    var id: String { rawValue }
+    var icon: String { "text.align\(rawValue)" }
+}
+
+struct TitleStyle: Codable, Equatable, Hashable {
+    var font: TitleFont = .system
+    var weight: TitleWeight = .bold
+    var card: TitleCard = .light
+    /// nil = automatic (dark on the light card, white on the others).
+    var textColor: RGBA? = nil
+    var cardColor = RGBA(hex: 0x0A84FF)
+    var align: TitleAlign = .center
+
+    init() {}
+
+    init(font: TitleFont, weight: TitleWeight, card: TitleCard, textColor: RGBA? = nil, cardColor: RGBA = RGBA(hex: 0x0A84FF)) {
+        self.font = font; self.weight = weight; self.card = card; self.textColor = textColor; self.cardColor = cardColor
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        font = (try? c.decodeIfPresent(TitleFont.self, forKey: .font)) ?? .system
+        weight = (try? c.decodeIfPresent(TitleWeight.self, forKey: .weight)) ?? .bold
+        card = (try? c.decodeIfPresent(TitleCard.self, forKey: .card)) ?? .light
+        textColor = (try? c.decodeIfPresent(RGBA.self, forKey: .textColor)) ?? nil
+        cardColor = (try? c.decodeIfPresent(RGBA.self, forKey: .cardColor)) ?? RGBA(hex: 0x0A84FF)
+        align = (try? c.decodeIfPresent(TitleAlign.self, forKey: .align)) ?? .center
+    }
+
+    /// The text colour actually used.
+    var resolvedTextColor: RGBA {
+        textColor ?? (card == .light ? RGBA(hex: 0x1D1D1F) : RGBA(hex: 0xFFFFFF))
+    }
+
+    /// Apple's system colours (dark-mode variants), for text and colour cards.
+    static let palette: [RGBA] = [0xFFFFFF, 0x1D1D1F, 0x0A84FF, 0x5E5CE6, 0xBF5AF2, 0xFF375F, 0xFF453A, 0xFF9F0A, 0xFFD60A, 0x30D158, 0x40C8E0]
+        .map { RGBA(hex: $0) }
+
+    static func name(of color: RGBA) -> String {
+        let names = ["White", "Black", "Blue", "Indigo", "Purple", "Pink", "Red", "Orange", "Yellow", "Green", "Teal"]
+        return palette.firstIndex(of: color).map { names[$0] } ?? "Custom color"
+    }
+
+    /// One-click looks.
+    static let presets: [(name: String, style: TitleStyle)] = [
+        ("Classic", TitleStyle()),
+        ("Midnight", TitleStyle(font: .system, weight: .semibold, card: .dark)),
+        ("Frosted", TitleStyle(font: .system, weight: .bold, card: .glass)),
+        ("Keynote", TitleStyle(font: .system, weight: .heavy, card: .none)),
+        ("Bubble", TitleStyle(font: .rounded, weight: .bold, card: .color, cardColor: RGBA(hex: 0x0A84FF))),
+        ("Editorial", TitleStyle(font: .serif, weight: .semibold, card: .light)),
+        ("Terminal", TitleStyle(font: .mono, weight: .medium, card: .dark, textColor: RGBA(hex: 0x30D158))),
+        ("Poster", TitleStyle(font: .expanded, weight: .heavy, card: .color, cardColor: RGBA(hex: 0xFF375F))),
+    ]
+}
+
 /// A timed overlay: blur/spotlight an area, show a title, hide the cursor, or change the camera layout.
 struct EffectSegment: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -158,6 +255,9 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     /// Centre of the title on the canvas (normalised, top-left) when placement is custom.
     var textX: Double = 0.5
     var textY: Double = 0.5
+    /// A smaller second line under the title.
+    var subtitle = ""
+    var titleStyle = TitleStyle()
     /// Kept on the timeline but not rendered.
     var disabled = false
     var duration: Double { end - start }
@@ -189,6 +289,8 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         disabled = try c.decodeIfPresent(Bool.self, forKey: .disabled) ?? false
         textX = try c.decodeIfPresent(Double.self, forKey: .textX) ?? 0.5
         textY = try c.decodeIfPresent(Double.self, forKey: .textY) ?? 0.5
+        subtitle = (try? c.decodeIfPresent(String.self, forKey: .subtitle)) ?? ""
+        titleStyle = (try? c.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
     }
 }
 

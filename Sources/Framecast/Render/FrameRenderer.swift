@@ -175,7 +175,7 @@ final class FrameRenderer: @unchecked Sendable {
 
         // Titles sit on the canvas, unaffected by the zoom.
         for (e, a) in active where e.kind == .text && !e.text.isEmpty {
-            out = titleCard(e, alpha: a, size: size, unit: L.unit).composited(over: out)
+            out = titleCard(e, alpha: a, size: size, unit: L.unit, backdrop: out).composited(over: out)
         }
 
         // Webcam (not affected by the camera zoom)
@@ -290,12 +290,19 @@ final class FrameRenderer: @unchecked Sendable {
         ]).cropped(to: canvas)
     }
 
-    private func titleCard(_ e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat) -> CIImage {
-        let img = text.image(e.text, kind: .title, fontSize: 58 * unit * CGFloat(e.textSize), maxWidth: size.width * 0.82)
+    private func titleCard(_ e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat, backdrop: CIImage) -> CIImage {
+        let style = e.titleStyle
+        let title = text.title(e.text, subtitle: e.subtitle, style: style, fontSize: 58 * unit * CGFloat(e.textSize), maxWidth: size.width * 0.82)
+        let img = title.image
         let w = img.extent.width, h = img.extent.height
         let margin = min(size.width, size.height) * 0.08
         var y: CGFloat
-        var x = (size.width - w) / 2
+        var x: CGFloat
+        switch style.align {
+        case .left: x = margin
+        case .center: x = (size.width - w) / 2
+        case .right: x = size.width - margin - w
+        }
         switch e.placement {
         case .top: y = size.height - margin - h
         case .center: y = (size.height - h) / 2
@@ -306,9 +313,22 @@ final class FrameRenderer: @unchecked Sendable {
             y = min(max(0, (1 - CGFloat(e.textY)) * size.height - h / 2), size.height - h)
         }
         y -= CGFloat(1 - alpha) * 24 * unit
-        let card = img.transformed(by: CGAffineTransform(translationX: x, y: y))
-        let shadow = roundedRect(card.extent.offsetBy(dx: 0, dy: -10 * unit), radius: 26 * unit * CGFloat(e.textSize),
-                                 color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+        var card = img.transformed(by: CGAffineTransform(translationX: x, y: y))
+        if style.card == .none { return withAlpha(card, CGFloat(alpha)) }
+        if style.card == .glass {
+            // Frosted glass: the video behind the card, blurred and a little more vivid.
+            let rect = card.extent
+            let frosted = backdrop.clampedToExtent()
+                .applyingGaussianBlur(sigma: Double(28 * unit))
+                .applyingFilter("CIColorControls", parameters: ["inputSaturation": 1.3, "inputBrightness": -0.02])
+                .cropped(to: rect)
+            let glass = frosted.applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: roundedRect(rect, radius: title.radius),
+            ])
+            card = card.composited(over: glass)
+        }
+        let shadow = roundedRect(card.extent.offsetBy(dx: 0, dy: -10 * unit), radius: title.radius,
+                                 color: CIColor(red: 0, green: 0, blue: 0, alpha: style.card == .glass ? 0.22 : 0.35))
             .applyingGaussianBlur(sigma: Double(22 * unit))
         return withAlpha(card.composited(over: shadow), CGFloat(alpha))
     }

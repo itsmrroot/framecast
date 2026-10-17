@@ -123,11 +123,18 @@ struct TitleCanvasOverlay: View {
     /// Where the title card sits on the canvas (top-left view coordinates), matching the renderer.
     private func cardFrame() -> CGRect {
         let unit = min(size.width, size.height) / 1080
-        let img = FrameRenderer.shared.text.image(effect.text.isEmpty ? " " : effect.text, kind: .title,
-                                                  fontSize: 58 * unit * CGFloat(effect.textSize), maxWidth: size.width * 0.82)
+        let img = FrameRenderer.shared.text.title(effect.text.isEmpty ? " " : effect.text, subtitle: effect.subtitle,
+                                                  style: effect.titleStyle, fontSize: 58 * unit * CGFloat(effect.textSize),
+                                                  maxWidth: size.width * 0.82).image
         let w = img.extent.width, h = img.extent.height
         let margin = min(size.width, size.height) * 0.08
-        var x = (size.width - w) / 2, y: CGFloat
+        var y: CGFloat
+        var x: CGFloat
+        switch effect.titleStyle.align {
+        case .left: x = margin
+        case .center: x = (size.width - w) / 2
+        case .right: x = size.width - margin - w
+        }
         switch effect.placement {
         case .top: y = margin
         case .center: y = (size.height - h) / 2

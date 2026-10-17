@@ -97,6 +97,10 @@ enum SelfTest {
         check(zip(clips, clips.dropFirst()).allSatisfy { abs($0.end - $1.start) < 0.0001 }, "pieces are contiguous")
         let merged = ClipOps.apply([(1, 3), (3.3, 6), (9.7, 9.9)], to: [Clip(start: 0, end: 10)], speed: 4)
         check(merged.allSatisfy { $0.duration >= 0.5 }, "no pieces shorter than 0.5 s (\(merged.map { String(format: "%.1f", $0.duration) }))")
+        let ts = try? JSONDecoder().decode(TitleStyle.self, from: Data(#"{"card":"bogus","font":"serif","align":"left"}"#.utf8))
+        check(ts?.card == .light && ts?.font == .serif && ts?.align == .left, "title style: bad value dropped, good kept")
+        let oldTitle = try? JSONDecoder().decode(EffectSegment.self, from: Data(#"{"kind":"text","start":0,"end":2,"text":"Hi"}"#.utf8))
+        check(oldTitle?.titleStyle == TitleStyle() && oldTitle?.subtitle == "", "titles from older projects get the classic look")
         let map = EditMap(clips: [Clip(start: 0, end: 2), Clip(start: 5, end: 7, speed: 2)])
         check(abs(map.duration - 3) < 0.0001 && abs(map.compTime(source: 6) - 2.5) < 0.0001 && abs(map.compTime(source: 3) - 2) < 0.0001,
               "edited time closes cuts and applies speed")

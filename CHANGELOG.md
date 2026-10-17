@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+
+**Titles you can style**
+- Eight one-click looks: Classic, Midnight, Frosted, Keynote, Bubble, Editorial, Terminal and Poster
+- Apple's typefaces: SF Pro, SF Pro Rounded, New York and SF Mono, plus condensed and expanded SF Pro
+- Five weights, left / centre / right alignment, and an optional subtitle line
+- Text in Apple's system colours or any colour you pick
+- Backgrounds: light card, dark card, coloured card, frosted glass that blurs the video behind it, or just the text with a soft shadow
+- New titles take the look of the last one, so a video's titles match
+
 ## 1.5.0
 
 Fixes from a full hands-on test of 1.4.0, plus a few things that make recording easier.
