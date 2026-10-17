@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11.0
+
+- The split tool moves like Screen Studio's: turning it on or off makes the timeline lanes dip and spring back, one after another
+- Each cut gives its lane the same little bounce
+- With the split tool on, the lane under the pointer lifts slightly, so you can see which lane a click will cut
+
 ## 1.10.0
 
 **Smoother zooms, no surprise blur**

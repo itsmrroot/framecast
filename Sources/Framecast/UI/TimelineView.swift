@@ -14,6 +14,9 @@ struct TimelineView: View {
     /// Pointing at the effects lane: effects open up and the zoom lane folds to a thin strip (Screen Studio's
     /// hover-driven lanes). Otherwise zooms are open and effects are thin bars.
     @State private var effectsFocus = false
+    /// Split-tool motion: each lane dips and springs back when the tool turns on/off or that lane is cut.
+    @State private var laneKicks = [0, 0, 0]
+    @State private var hoverY: CGFloat?
 
     /// Effects lane open: pointing at it, or (when not pointing at the timeline) an effect is selected.
     private var effectsOpen: Bool {
@@ -62,10 +65,13 @@ struct TimelineView: View {
                     ZStack(alignment: .topLeading) {
                         ruler(width: contentW, pps: pps)
                         clipTrack(width: contentW, pps: pps)
+                            .modifier(LaneMotion(kick: laneKicks[0], index: 0, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 0))
                             .offset(y: rulerH + 6)
                         zoomTrack(width: contentW, pps: pps)
+                            .modifier(LaneMotion(kick: laneKicks[1], index: 1, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 1))
                             .offset(y: zoomY)
                         effectTrack(width: contentW, pps: pps, rows: rows, height: effectsH)
+                            .modifier(LaneMotion(kick: laneKicks[2], index: 2, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 2))
                             .offset(y: effectsY)
                         if compact {
                             laneLabel("Zooms").offset(y: zoomY - labelH).transition(.opacity)
@@ -95,12 +101,14 @@ struct TimelineView: View {
                     .onContinuousHover { phase in
                         if case .active(let p) = phase {
                             hoverX = min(max(0, p.x), contentW)
+                            hoverY = p.y
                             // Fold lanes by where the pointer is, with a little hysteresis so they don't flicker.
                             if !effectsFocus && p.y > effectsY - 2 { effectsFocus = true }
                             else if effectsFocus && p.y < zoomY + zoomH + 2 { effectsFocus = false }
                             if drag == nil && newZoom == nil { model.scrub(comp: Double(hoverX! / pps)) }
                         } else {
                             hoverX = nil
+                            hoverY = nil
                             effectsFocus = false
                             model.scrub(comp: nil)
                         }
@@ -115,6 +123,16 @@ struct TimelineView: View {
         }
         // Grows with stacked effect lanes (up to a limit, then scrolls).
         .frame(height: min(max(38 + fullH + 8, 236), 400))
+        .onChange(of: model.bladeMode) { _, _ in laneKicks = laneKicks.map { $0 + 1 } }
+        .onChange(of: model.cutTick) { _, _ in laneKicks[model.lastCutLane] += 1 }
+    }
+
+    /// With the split tool on, the lane under the pointer (the one a click would cut) lifts slightly.
+    private func liftedLane(zoomY: CGFloat, effectsY: CGFloat) -> Int? {
+        guard model.bladeMode, let y = hoverY, y > rulerH else { return nil }
+        if y < zoomY - gap / 2 - (compact ? labelH : 0) { return 0 }
+        if y < effectsY - gap / 2 - (effectsOpen ? 0 : labelH) { return 1 }
+        return 2
     }
 
     /// Split tool click: cut the clip, the zoom or the effect under the pointer, and nothing else.
@@ -897,4 +915,29 @@ enum ScissorsCursor {
             return true
         }
     }()
+}
+
+/// The split tool's lane motion (as in Screen Studio): a quick dip and springy return, staggered by lane,
+/// plus a small lift for the lane under the pointer.
+private struct LaneMotion: ViewModifier {
+    let kick: Int
+    let index: Int
+    let lifted: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: lifted ? -3 : 0)
+            .shadow(color: .black.opacity(lifted ? 0.45 : 0), radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lifted)
+            .keyframeAnimator(initialValue: 0.0, trigger: kick) { view, y in
+                view.offset(y: y)
+            } keyframes: { _ in
+                KeyframeTrack {
+                    // Never a zero-length keyframe: it produces NaN geometry (and a crash).
+                    LinearKeyframe(0, duration: 0.01 + 0.045 * Double(index))
+                    CubicKeyframe(7, duration: 0.11)
+                    SpringKeyframe(0, duration: 0.5, spring: Spring(response: 0.4, dampingRatio: 0.55))
+                }
+            }
+    }
 }

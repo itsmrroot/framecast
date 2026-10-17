@@ -690,6 +690,10 @@ final class EditorModel: ObservableObject {
     // The split tool cuts only the lane you click, as in Screen Studio.
     private let minPiece = 0.15
 
+    /// Bumped on every split-tool cut, with the lane that was cut (0 clip, 1 zoom, 2 effects), for the timeline's bounce.
+    @Published private(set) var cutTick = 0
+    private(set) var lastCutLane = 0
+
     func cutClip(at t: Double) {
         guard let i = doc.clips.firstIndex(where: { t > $0.start + minPiece && t < $0.end - minPiece }) else { NSSound.beep(); return }
         edit(.timeline) { d in
@@ -698,6 +702,7 @@ final class EditorModel: ObservableObject {
             d.clips.replaceSubrange(i...i, with: [a, b])
         }
         selection = .none
+        lastCutLane = 0; cutTick += 1
     }
 
     func cutZoom(at t: Double) {
@@ -709,6 +714,7 @@ final class EditorModel: ObservableObject {
             d.zooms.replaceSubrange(i...i, with: [a, b])
         }
         selection = .none
+        lastCutLane = 1; cutTick += 1
     }
 
     func cutEffect(_ id: UUID, at t: Double) {
@@ -719,6 +725,7 @@ final class EditorModel: ObservableObject {
             d.effects.replaceSubrange(i...i, with: [a, b])
         }
         selection = .none
+        lastCutLane = 2; cutTick += 1
     }
 
     /// Splits the clip under a source time (the blade tool).

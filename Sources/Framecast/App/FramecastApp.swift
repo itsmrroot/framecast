@@ -173,6 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if v == "crop" { c.showCrop() }
                     if v == "palette" { c.showPalette() }
                     if v == "blade" { c.model.bladeMode = true }
+                    if v == "blade-cycle" { // debug: watch the split-tool lane motion repeat
+                        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+                            MainActor.assumeIsolated { c.model.bladeMode.toggle() }
+                        }
+                    }
                     if v.hasPrefix("panel:"), let tab = InspectorTab(rawValue: String(v.dropFirst(6))) { c.showPanel(tab) }
                     if v.hasPrefix("select:"), let kind = EffectKind(rawValue: String(v.dropFirst(7))),
                        let e = c.model.doc.effects.first(where: { $0.kind == kind }) {
