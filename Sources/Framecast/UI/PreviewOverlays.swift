@@ -30,6 +30,14 @@ struct RegionCanvasOverlay: View {
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .contentShape(Rectangle())
+            // A click (no drag) still selects another effect, opens the background settings, or plays.
+            .onTapGesture(coordinateSpace: .local) { p in
+                if let other = PreviewHitTest.effect(at: p, model: model, size: size), other.id != effect.id {
+                    model.selection = .effect(other.id)
+                } else if !r.contains(p) {
+                    model.selection = .none
+                }
+            }
             .gesture(DragGesture(minimumDistance: 1)
                 .onChanged { v in
                     if drag == nil { drag = (hit(v.startLocation, r), r, v.startLocation) }
@@ -90,6 +98,10 @@ struct TitleCanvasOverlay: View {
     let size: CGSize
     @State private var startCenter: CGPoint?
     @State private var dragCenter: CGPoint?
+    /// Typing straight into the title on the video.
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         let base = Self.cardFrame(effect, size: size)
@@ -111,13 +123,38 @@ struct TitleCanvasOverlay: View {
                 .offset(x: frame.minX, y: frame.minY)
                 .allowsHitTesting(false)
             }
+            if editing {
+                let style = effect.titleStyle
+                TextField("Type your title", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Font(TextArt.font(style.font, weight: style.weight, size: Self.fontSize(effect, size: size)) as CTFont))
+                    .multilineTextAlignment(style.align == .left ? .leading : (style.align == .right ? .trailing : .center))
+                    .foregroundStyle(style.resolvedTextColor.color)
+                    .focused($fieldFocused)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .frame(width: max(frame.width, size.width * 0.5))
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(style.card == .light ? Color.white.opacity(0.95) : Color(white: 0.1).opacity(0.9)))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.accent, lineWidth: 2))
+                    .position(x: frame.midX, y: frame.midY)
+                    .onChange(of: draft) { _, v in
+                        model.updateEffect(effect.id, coalesce: "inline-\(effect.id)") { $0.text = v }
+                    }
+                    .onSubmit { endEditing() }
+                    .onChange(of: fieldFocused) { _, focused in if !focused { endEditing() } }
+                    .onExitCommand { endEditing() }
+            }
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                 .foregroundStyle(.white)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(dragCenter == nil ? 0.06 : 0)))
                 .frame(width: frame.width + 12, height: frame.height + 12)
+                .opacity(editing ? 0 : 1)
+                .allowsHitTesting(!editing)
                 // The hit area must be set before the offset, or it stays at the top-left corner.
                 .contentShape(Rectangle())
+                // Click (or double-click) the title to type into it; drag to move it.
+                .onTapGesture { beginEditing() }
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { v in
                         if startCenter == nil {
@@ -142,7 +179,7 @@ struct TitleCanvasOverlay: View {
                         model.hiddenEffect = nil
                     })
                 .offset(x: frame.minX - 6, y: frame.minY - 6)
-            Label("Drag to move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+            Label(editing ? "Return to finish" : "Drag to move · click to type", systemImage: editing ? "character.cursor.ibeam" : "arrow.up.and.down.and.arrow.left.and.right")
                 .font(.system(size: 10.5, weight: .semibold))
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Capsule().fill(Color.black.opacity(0.6)))
@@ -151,7 +188,33 @@ struct TitleCanvasOverlay: View {
                 .allowsHitTesting(false)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
-        .onDisappear { if model.hiddenEffect == effect.id { model.hiddenEffect = nil } }
+        .onDisappear {
+            if editing { endEditing() }
+            if model.hiddenEffect == effect.id { model.hiddenEffect = nil }
+        }
+        .onAppear {
+            // A brand-new title opens ready to type.
+            if effect.text.isEmpty || effect.text == EffectSegment(kind: .text, start: 0, end: 0).text { beginEditing() }
+        }
+    }
+
+    private func beginEditing() {
+        guard !editing else { return }
+        let placeholder = EffectSegment(kind: .text, start: 0, end: 0).text
+        draft = effect.text == placeholder ? "" : effect.text
+        editing = true
+        model.player.pause()
+        model.hiddenEffect = effect.id
+        DispatchQueue.main.async { fieldFocused = true }
+    }
+
+    private func endEditing() {
+        guard editing else { return }
+        editing = false
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.updateEffect(effect.id, coalesce: "inline-\(effect.id)") { $0.text = EffectSegment(kind: .text, start: 0, end: 0).text }
+        }
+        if model.hiddenEffect == effect.id { model.hiddenEffect = nil }
     }
 
     private static func fontSize(_ e: EffectSegment, size: CGSize) -> CGFloat {
@@ -278,12 +341,22 @@ struct ImageCanvasOverlay: View {
 }
 
 enum PreviewHitTest {
+    /// Whether a click (top-left view point) lands on the recording itself rather than the background around it.
+    @MainActor
+    static func isOnScreen(_ p: CGPoint, model: EditorModel, size: CGSize) -> Bool {
+        guard let rm = model.renderModel else { return true }
+        let vt = FrameRenderer.shared.viewTransform(model: rm, sourceTime: model.sourceTime, size: size)
+        // The whole recording (full-frame 0…1) through the current zoom and crop.
+        return vt.viewRect(fullFrame: CGRect(x: rm.crop.x, y: rm.crop.y, width: rm.crop.w, height: rm.crop.h),
+                           crop: rm.crop, canvasHeight: size.height).contains(p)
+    }
+
     /// The effect under a click on the preview (top-left view point): titles first, then blur/spotlight areas.
     @MainActor
     static func effect(at p: CGPoint, model: EditorModel, size: CGSize) -> EffectSegment? {
         let t = model.sourceTime
         let active = model.doc.effects.filter { !$0.disabled && t >= $0.start && t <= $0.end }
-        if let title = active.last(where: { $0.kind == .text && !$0.text.isEmpty
+        if let title = active.last(where: { $0.kind == .text
             && TitleCanvasOverlay.cardFrame($0, size: size).insetBy(dx: -6, dy: -6).contains(p) }) {
             return title
         }

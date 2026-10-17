@@ -606,10 +606,13 @@ struct TimelineView: View {
 
     /// Moves a source range by a drag in edited time, keeping its edited length and staying within `bounds` (source).
     private func moved(_ start: Double, _ end: Double, by dx: CGFloat, pps: CGFloat, within bounds: ClosedRange<Double>) -> (Double, Double) {
-        let cs = map.compTime(source: start), len = map.compTime(source: end) - cs
-        let lo = map.compTime(source: bounds.lowerBound), hi = map.compTime(source: bounds.upperBound)
-        let ncs = clamp(cs + Double(dx / pps), lo, max(lo, hi - len))
-        return (max(bounds.lowerBound, map.sourceTime(comp: ncs)), min(bounds.upperBound, map.sourceTime(comp: ncs + len)))
+        // Shift in source time by how far the pointer moved in the footage, keeping the length exactly
+        // (round-tripping both ends through edited time would snap an end inside a cut and change it).
+        let x0 = cx(start, pps)
+        let ds = src(x0 + dx, pps) - src(x0, pps)
+        let len = end - start
+        let ns = clamp(start + ds, bounds.lowerBound, max(bounds.lowerBound, bounds.upperBound - len))
+        return (ns, min(bounds.upperBound, ns + len))
     }
 
     // MARK: Effects
@@ -686,7 +689,7 @@ struct TimelineView: View {
         let selected = model.selection == .effect(e.id)
         let w = max(4, CGFloat(ce - cs) * pps)
         let color = TimelineView.effectColor(e.kind)
-        let title = e.kind == .text ? e.text : (e.kind == .annotation ? e.shape.label : e.kind.label)
+        let title = e.kind == .text ? (e.text.isEmpty ? "Title" : e.text) : (e.kind == .annotation ? e.shape.label : e.kind.label)
         return effectFace(e, selected: selected, w: w, color: color, title: title)
             .contentShape(Rectangle())
             .onTapGesture {

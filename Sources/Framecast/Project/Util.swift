@@ -5,6 +5,14 @@ import CoreMedia
 @inline(__always) func clamp<T: Comparable>(_ v: T, _ lo: T, _ hi: T) -> T { min(max(v, lo), hi) }
 @inline(__always) func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
 
+/// A critically damped spring's step response, normalised to reach 1 at x = 1: starts at rest, rises
+/// quickly and settles gently. This is the "fast but smooth" feel of Screen Studio's zooms.
+func springEase(_ x: Double, stiffness k: Double = 7) -> Double {
+    let t = clamp(x, 0, 1)
+    let f = { (u: Double) in 1 - (1 + k * u) * exp(-k * u) }
+    return f(t) / f(1)
+}
+
 func smootherstep(_ x: Double) -> Double {
     let t = clamp(x, 0, 1)
     return t * t * t * (t * (t * 6 - 15) + 10)

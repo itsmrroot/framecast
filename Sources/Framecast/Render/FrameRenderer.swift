@@ -61,13 +61,10 @@ final class FrameRenderer: @unchecked Sendable {
             let kx = target.width / screen.extent.width
             let ky = target.height / screen.extent.height
             var img: CIImage
-            if kx < 0.8 {
-                img = screen.applyingFilter("CILanczosScaleTransform", parameters: [
-                    kCIInputScaleKey: ky, kCIInputAspectRatioKey: kx / ky,
-                ])
-            } else {
-                img = screen.transformed(by: CGAffineTransform(scaleX: kx, y: ky))
-            }
+            // One high-quality filter at every scale, so sharpness doesn't jump partway through a zoom.
+            img = screen.applyingFilter("CILanczosScaleTransform", parameters: [
+                kCIInputScaleKey: ky, kCIInputAspectRatioKey: kx / ky,
+            ])
             img = img.transformed(by: CGAffineTransform(translationX: target.minX - img.extent.minX, y: target.minY - img.extent.minY))
             let radius = CGFloat(style.cornerRadius) * L.unit * s
             if radius > 0.5 {
@@ -158,14 +155,15 @@ final class FrameRenderer: @unchecked Sendable {
                     let vx = st.velocity.dx * sr.width * s / 60
                     let vy = -st.velocity.dy * sr.height * s / 60
                     let speed = hypot(vx, vy)
-                    if speed > 3 * L.unit {
-                        let len = min(speed * 1.2, 90 * L.unit * s)
+                    // Only a fast flick leaves a short, faint trail; ordinary movement stays crisp.
+                    if speed / s > 25 * L.unit {
+                        let len = min(speed * 0.5, 30 * L.unit)
                         let dx = vx / speed * len, dy = vy / speed * len
                         var ghosts = CIImage.empty()
-                        let n = 6
+                        let n = 4
                         for i in stride(from: n, through: 1, by: -1) {
                             let f = CGFloat(i) / CGFloat(n)
-                            let g = withAlpha(img, 0.32 * (1 - f) + 0.04)
+                            let g = withAlpha(img, 0.15 * (1 - f) + 0.03)
                                 .transformed(by: CGAffineTransform(translationX: -dx * f, y: -dy * f))
                             ghosts = g.composited(over: ghosts)
                         }
@@ -247,11 +245,15 @@ final class FrameRenderer: @unchecked Sendable {
         let amount = CGFloat(model.style.motionBlur)
         let canvas = CGRect(origin: .zero, size: size)
         var out = image
-        let dx = CGFloat(cam.focus.x - prev.focus.x) * sr.width * s
-        let dy = -CGFloat(cam.focus.y - prev.focus.y) * sr.height * s
-        // Kept subtle: it should soften movement, not smear text.
-        let pan = min(hypot(dx, dy) * amount * 0.45, 14 * unit)
-        if pan > 2 { // ignore the tiny settling drift after a zoom
+        // Only blur what the viewer actually sees move: the clamped view, not the raw focus point
+        // (at zoom 1 the focus follows the cursor but the picture stays still).
+        let prevView = viewTransform(model: model, sourceTime: max(0, t - 1.0 / 60), size: size)
+        guard s > 1.01 || prevView.scale > 1.01 else { return image }
+        let dx = (prevView.origin.x - ox) * s
+        let dy = (prevView.origin.y - oy) * s
+        // Kept subtle: it should soften fast movement, not smear text.
+        let pan = min(hypot(dx, dy) * amount * 0.3, 10 * unit)
+        if pan > 4 * unit {
             out = out.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
                 kCIInputRadiusKey: pan, kCIInputAngleKey: atan2(dy, dx),
             ]).cropped(to: canvas)

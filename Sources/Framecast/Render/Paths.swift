@@ -145,12 +145,15 @@ final class CameraPath {
         var cy = [Float](repeating: 0.5, count: n)
         let sorted = zooms.sorted { $0.start < $1.start }
         let dt = 1.0 / rate
-        // Focused: a stiffer, quicker camera. Smooth: slower and floatier.
-        let omega = animation == .focused ? 9.0 : 5.0
+        // Focused: a stiffer, quicker camera. Smooth: a little floatier, but never slow.
+        let omega = animation == .focused ? 12.0 : 8.5
         let transition = animation == .focused ? transition * 0.7 : transition
 
         var c = CGPoint(x: 0.5, y: 0.5)
         var v = CGVector.zero
+        // While a zoom ramps in, the focus glides with the scale (one motion) from where it was.
+        var rampFor: UUID?
+        var rampFrom = CGPoint(x: 0.5, y: 0.5)
 
         func cursorAt(_ t: Double) -> CGPoint {
             guard let cursor, cursor.hasData else { return CGPoint(x: 0.5, y: 0.5) }
@@ -162,19 +165,22 @@ final class CameraPath {
             var best = 1.0
             var active: ZoomSegment?
             var rampEnd = 0.0
+            var activeIn = 1.0
             for z in sorted {
                 let T = z.instant ? 0 : max(0.05, min(transition, z.duration / 2))
                 // "Start animation early": the zoom-in finishes as the block starts instead of after it.
                 let inStart = startEarly ? z.start - T : z.start
                 guard t >= inStart && t <= z.end else { continue }
-                let pIn = T > 0 ? smootherstep((t - inStart) / T) : 1
-                let pOut = T > 0 ? smootherstep((z.end - t) / T) : 1
+                // Spring-shaped: quick to get going, gentle to land, both in and out.
+                let pIn = T > 0 ? springEase((t - inStart) / T) : 1
+                let pOut = T > 0 ? 1 - springEase((t - (z.end - T)) / T) : 1
                 // Interpolate in log space so the zoom feels linear.
-                let s = exp(log(max(1, z.scale)) * min(pIn, pOut))
+                let s = exp(log(max(1, z.scale)) * min(pIn, t > z.end - T ? pOut : 1))
                 if s >= best {
                     best = s
                     active = z
                     rampEnd = inStart + T
+                    activeIn = pIn
                 }
             }
 
@@ -185,27 +191,35 @@ final class CameraPath {
                 // While zooming in, aim at where the cursor will be once the zoom settles.
                 desired = cursorAt(rampEnd)
             } else {
-                desired = cursorAt(t)
+                // A little lookahead so following pans move with the cursor instead of trailing it.
+                desired = cursorAt(t + 0.08)
             }
 
             if best <= 1.001 || (active?.instant == true && t < (active?.start ?? 0) + 2 * dt) {
                 // At rest (or cutting straight into an instant zoom) the camera sits on its target.
                 c = desired
                 v = .zero
+                rampFor = nil
+            } else if let z = active, t < rampEnd {
+                // Zooming in: focus and scale move as one, on the same curve, so nothing drifts afterwards.
+                if rampFor != z.id { rampFor = z.id; rampFrom = c }
+                c = CGPoint(x: rampFrom.x + (desired.x - rampFrom.x) * activeIn, y: rampFrom.y + (desired.y - rampFrom.y) * activeIn)
+                v = .zero
             } else {
-                var target = c
-                if let z = active, z.mode == .followCursor, t >= rampEnd {
-                    // Dead zone: only pan once the cursor nears the edge of the visible area.
-                    let hx = viewHalfExtent.width / best * 0.42
-                    let hy = viewHalfExtent.height / best * 0.42
-                    if desired.x > c.x + hx { target.x = desired.x - hx } else if desired.x < c.x - hx { target.x = desired.x + hx }
-                    if desired.y > c.y + hy { target.y = desired.y - hy } else if desired.y < c.y - hy { target.y = desired.y + hy }
-                } else {
-                    target = desired
+                var target = desired
+                if let z = active, z.mode == .followCursor {
+                    // Soft dead zone: the camera only pans once the cursor nears the edge of the visible area.
+                    let hx = viewHalfExtent.width / best * 0.38
+                    let hy = viewHalfExtent.height / best * 0.38
+                    target.x = desired.x - clamp(desired.x - c.x, -hx, hx)
+                    target.y = desired.y - clamp(desired.y - c.y, -hy, hy)
                 }
                 let ax = omega * omega * (target.x - c.x) - 2 * omega * v.dx
                 let ay = omega * omega * (target.y - c.y) - 2 * omega * v.dy
                 v.dx += ax * dt; v.dy += ay * dt
+                // Stop the spring's last sub-pixel creep, which shows as shimmering text.
+                if abs(v.dx) < 1e-4 && abs(target.x - c.x) < 1e-4 { v.dx = 0 }
+                if abs(v.dy) < 1e-4 && abs(target.y - c.y) < 1e-4 { v.dy = 0 }
                 c.x += v.dx * dt; c.y += v.dy * dt
             }
             scales[i] = Float(best)

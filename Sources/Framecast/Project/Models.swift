@@ -247,6 +247,8 @@ struct TitleStyle: Codable, Equatable, Hashable {
     var textColor: RGBA? = nil
     var cardColor = RGBA(hex: 0x0A84FF)
     var align: TitleAlign = .center
+    /// The look this style started from, kept while you change the typeface, colours and so on.
+    var look: String? = nil
 
     init() {}
 
@@ -262,6 +264,14 @@ struct TitleStyle: Codable, Equatable, Hashable {
         textColor = (try? c.decodeIfPresent(RGBA.self, forKey: .textColor)) ?? nil
         cardColor = (try? c.decodeIfPresent(RGBA.self, forKey: .cardColor)) ?? RGBA(hex: 0x0A84FF)
         align = (try? c.decodeIfPresent(TitleAlign.self, forKey: .align)) ?? .center
+        look = (try? c.decodeIfPresent(String.self, forKey: .look)) ?? nil
+    }
+
+    /// Same appearance as another style, ignoring alignment and which look it came from.
+    func looksLike(_ other: TitleStyle) -> Bool {
+        var a = self, b = other
+        a.align = .center; b.align = .center; a.look = nil; b.look = nil
+        return a == b
     }
 
     /// The text colour actually used.
@@ -622,11 +632,11 @@ struct Style: Codable, Equatable {
     var cursorRotation: CursorRotation = .off
     var cursorTiltAmount: Double = 0.3
 
-    var zoomTransition: Double = 0.9
+    var zoomTransition: Double = 0.65
     var defaultZoomScale: Double = 2.0
     var screenAnimation: ScreenAnimation = .smooth
     /// Cinematic blur on the whole screen while zooming and panning (0 = off).
-    var motionBlur: Double = 0.6
+    var motionBlur: Double = 0.3
     /// Begin zooming in before each zoom starts, so it's fully zoomed on time.
     var startZoomEarly = false
     /// Keep zooms on the timeline but don't render them.

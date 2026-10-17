@@ -177,6 +177,7 @@ final class EditorModel: ObservableObject {
     }
 
     private func restore(_ s: Snapshot) {
+        hiddenEffect = nil
         let timelineChanged = s.clips != doc.clips
         doc.name = s.name
         doc.clips = s.clips
@@ -331,12 +332,24 @@ final class EditorModel: ObservableObject {
         if !isPlaying {
             // A seek within the same frame reuses the frame already on screen, so step a frame away and back:
             // the new effect (image, arrow…) then shows straight away on the paused preview.
-            let t = hoverTime ?? compTime
-            let away = t > 0.05 ? t - 1.0 / 30 : t + 1.0 / 30
+            // Marked as seeking, so the time observer doesn't move the playhead to the "away" frame.
+            guard !isSeeking else { pendingSeek = pendingSeek ?? compTime; return }
+            let target = hoverTime ?? compTime
+            let away = target > 0.05 ? target - 1.0 / 30 : target + 1.0 / 30
+            isSeeking = true
             player.seek(to: CMTime(sec: away), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 DispatchQueue.main.async {
-                    guard let self, !self.isPlaying else { return }
-                    self.player.seek(to: CMTime(sec: self.hoverTime ?? self.compTime), toleranceBefore: .zero, toleranceAfter: .zero)
+                    guard let self else { return }
+                    self.player.seek(to: CMTime(sec: target), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                        DispatchQueue.main.async {
+                            guard let self else { return }
+                            self.isSeeking = false
+                            if let p = self.pendingSeek {
+                                self.pendingSeek = nil
+                                self.seek(comp: p)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -582,8 +595,15 @@ final class EditorModel: ObservableObject {
         if kind == .text, doc.effects.filter({ $0.kind == .text }).isEmpty { e.text = doc.name }
         // New titles match the look of the last one, so a video's titles stay consistent.
         if kind == .text, let last = doc.effects.last(where: { $0.kind == .text }) { e.titleStyle = last.titleStyle }
+        if kind == .text && e.text.trimmingCharacters(in: .whitespaces).isEmpty { e.text = "Add your title" }
         edit(.render) { $0.effects.append(e) }
         selection = .effect(e.id)
+        // Step just inside it: at its very start an effect is still fading in (invisible), so styling
+        // it would seem to do nothing.
+        if !kind.needsCamera && kind != .hideCursor {
+            player.pause()
+            seek(source: e.start + min(0.3, e.duration / 4))
+        }
     }
 
     func updateEffect(_ id: UUID, coalesce: String? = nil, _ change: (inout EffectSegment) -> Void) {

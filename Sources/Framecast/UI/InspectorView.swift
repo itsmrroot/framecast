@@ -932,9 +932,10 @@ private struct EffectDetail: View {
     @ObservedObject var model: EditorModel
     let effect: EffectSegment
 
-    private func binding<T>(_ kp: WritableKeyPath<EffectSegment, T>, key: String) -> Binding<T> {
+    /// `coalesce` merges rapid changes (sliders, typing) into one undo step; discrete taps pass false.
+    private func binding<T>(_ kp: WritableKeyPath<EffectSegment, T>, key: String, coalesce: Bool = true) -> Binding<T> {
         Binding(get: { effect[keyPath: kp] },
-                set: { v in model.updateEffect(effect.id, coalesce: "\(key)-\(effect.id)") { $0[keyPath: kp] = v } })
+                set: { v in model.updateEffect(effect.id, coalesce: coalesce ? "\(key)-\(effect.id)" : nil) { $0[keyPath: kp] = v } })
     }
 
     var body: some View {
@@ -964,7 +965,7 @@ private struct EffectDetail: View {
                                 .textFieldStyle(.roundedBorder)
                                 .lineLimit(1...3)
                         }
-                        TitleStyleEditor(style: binding(\.titleStyle, key: "tstyle"))
+                        TitleStyleEditor(style: binding(\.titleStyle, key: "tstyle", coalesce: false))
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Position").font(.system(size: 12))
                             PillPicker(options: TextPlacement.allCases, selection: binding(\.placement, key: "place"), label: \.label)

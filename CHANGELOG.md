@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.10.0
+
+**Smoother zooms, no surprise blur**
+- Zooms move like a spring: quick to start, gentle to land, in and out. The default zoom is a little faster (0.65 s)
+- While zooming in, the camera moves and zooms in one motion, so it no longer keeps sliding afterwards
+- Following the cursor is quicker and smoother: a little lookahead, a soft edge zone and no slow drift
+- The whole picture no longer blurs when you move the cursor: motion blur only follows real camera movement, and is gentler by default
+- The cursor trail only shows on very fast flicks, and is short and faint
+- One sharp scaling filter at every zoom level, so text doesn't soften or jump in sharpness mid-zoom
+
+**Editing**
+- Type straight into a title on the video: click it (a new title opens ready to type), Return to finish
+- Watch your video full screen (button under the preview, or F). Space plays, Esc leaves
+- Click the wallpaper around the recording to open the Background settings, as in Screen Studio
+- Title styling shows right away, and a new effect is visible as soon as you add it (it used to start invisible at the playhead)
+- The look you pick stays highlighted when you change the typeface or colours ("Midnight, edited"), and each change is its own undo step
+- The playhead no longer slips back a frame after each edit
+- With a blur or spotlight selected, clicking the video can still select another effect
+- The on-video editing box only shows while the effect is on screen
+- Dragging an effect that starts inside a cut keeps its length
+
 ## 1.9.0
 
 **Menu bar**

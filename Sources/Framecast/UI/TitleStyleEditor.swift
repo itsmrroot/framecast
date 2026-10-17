@@ -7,13 +7,14 @@ struct TitleStyleEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            section("Look") {
+            section(lookTitle) {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                     ForEach(TitleStyle.presets, id: \.name) { preset in
-                        PresetTile(name: preset.name, style: preset.style, selected: style == preset.style) {
+                        PresetTile(name: preset.name, style: preset.style, selected: currentLook == preset.name) {
                             // Keep the alignment you chose; a look is about type and colour.
                             var s = preset.style
                             s.align = style.align
+                            s.look = preset.name
                             style = s
                         }
                     }
@@ -67,6 +68,16 @@ struct TitleStyleEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// The look this title uses: the one picked (kept while you tweak it), or one it exactly matches.
+    private var currentLook: String? {
+        style.look ?? TitleStyle.presets.first { $0.style.looksLike(style) }?.name
+    }
+
+    private var lookTitle: String {
+        guard let name = currentLook, let preset = TitleStyle.presets.first(where: { $0.name == name }) else { return "Look" }
+        return preset.style.looksLike(style) ? "Look" : "Look · \(name), edited"
     }
 
     private var cardHint: String {

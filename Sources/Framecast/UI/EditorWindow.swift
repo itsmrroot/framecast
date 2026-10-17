@@ -170,6 +170,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 self.model.addEffect(.blur); return nil
             case kVK_ANSI_T:
                 self.model.addEffect(.text); return nil
+            case kVK_ANSI_F:
+                FullScreenPlayer.show(model: self.model); return nil
             case kVK_Delete, kVK_ForwardDelete:
                 self.model.deleteSelection(); return nil
             case kVK_LeftArrow:
@@ -514,6 +516,9 @@ private struct PreviewArea: View {
                             if let e = PreviewHitTest.effect(at: v.location, model: model, size: size) {
                                 model.player.pause()
                                 model.selection = .effect(e.id)
+                            } else if !PreviewHitTest.isOnScreen(v.location, model: model, size: size) {
+                                // The wallpaper around the recording: open its settings, as Screen Studio does.
+                                WindowManager.shared.editorController(for: model)?.showPanel(.background)
                             } else if model.selection != .none, case .effect = model.selection {
                                 model.selection = .none
                             } else {
@@ -521,7 +526,9 @@ private struct PreviewArea: View {
                             }
                         })
                     // Edit the selected blur / spotlight area or title right on the video (while paused).
-                    if !model.isPlaying, let e = model.selectedEffect, !e.disabled {
+                    // Only while the effect is on screen at the playhead, so you can't drag something you can't see.
+                    if !model.isPlaying, let e = model.selectedEffect, !e.disabled,
+                       model.sourceTime >= e.start, model.sourceTime <= e.end {
                         let size = CGSize(width: max(1, fit.width), height: max(1, fit.height))
                         if e.kind.hasRegion {
                             // Clipped: while zoomed in, part of the area can be outside the visible frame.
@@ -572,6 +579,9 @@ private struct TransportBar: View {
                 Spacer()
                 IconButton(icon: "camera", help: "Save this frame as an image") { saveFrame() }
                     .disabled(!model.isReady)
+                IconButton(icon: "arrow.up.left.and.arrow.down.right", help: "Watch full screen (F)") { FullScreenPlayer.show(model: model) }
+                    .disabled(!model.isReady)
+                    .accessibilityLabel("Watch full screen")
                 Menu {
                     ForEach([0.5, 1, 1.5, 2, 4] as [Float], id: \.self) { r in
                         MenuCheck(String(format: "%g×", r), abs(model.playbackRate - r) < 0.01) { model.setPlaybackRate(r) }
