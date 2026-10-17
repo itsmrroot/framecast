@@ -10,6 +10,8 @@ Record your screen and Framecast turns it into a polished video: smooth zooms on
 a crisp animated cursor, a stylish background and an optional webcam bubble.
 
 [![Latest release](https://img.shields.io/github/v/release/itsmrroot/framecast?style=flat-square&color=5b5bf7)](https://github.com/itsmrroot/framecast/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/itsmrroot/framecast/total?style=flat-square&color=2ea44f&label=downloads)](https://github.com/itsmrroot/framecast/releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/itsmrroot/framecast/latest/total?style=flat-square&color=5b5bf7&label=latest%20release)](https://github.com/itsmrroot/framecast/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/itsmrroot/framecast/release.yml?style=flat-square&label=build)](https://github.com/itsmrroot/framecast/actions/workflows/release.yml)
 ![macOS 15+](https://img.shields.io/badge/macOS-15%2B-000000?style=flat-square&logo=apple)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)
