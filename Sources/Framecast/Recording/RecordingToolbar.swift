@@ -49,6 +49,8 @@ final class RecordingToolbar: ObservableObject {
     func hide() {
         panel?.orderOut(nil)
         panel = nil
+        noticePanel?.orderOut(nil)
+        noticePanel = nil
         closePicker()
         if RecordingCoordinator.shared.phase == .idle { CameraPreview.shared.hide() }
     }
@@ -90,14 +92,53 @@ final class RecordingToolbar: ObservableObject {
         case .window:
             showWindowPicker()
         case .device:
-            if SourceCatalog.shared.devices.isEmpty {
-                NSSound.beep()
-                return
+            DeviceCapture.enableDiscovery()
+            Task {
+                // A device can take a moment to appear after discovery is switched on.
+                for attempt in 0..<4 where SourceCatalog.shared.devices.isEmpty {
+                    if attempt > 0 { try? await Task.sleep(nanoseconds: 600_000_000) }
+                    await SourceCatalog.shared.refresh()
+                }
+                let devices = SourceCatalog.shared.devices
+                guard !devices.isEmpty else {
+                    showNotice("No iPhone or iPad found. Connect one with a cable, unlock it and tap Trust, then click Device again.")
+                    return
+                }
+                if settings.deviceID.isEmpty || !devices.contains(where: { $0.id == settings.deviceID }) {
+                    settings.deviceID = devices[0].id
+                }
+                begin(.device)
             }
-            if settings.deviceID.isEmpty || !SourceCatalog.shared.devices.contains(where: { $0.id == settings.deviceID }) {
-                settings.deviceID = SourceCatalog.shared.devices[0].id
-            }
-            begin(.device)
+        }
+    }
+
+    private var noticePanel: NSPanel?
+
+    /// A short message under the toolbar that goes away by itself.
+    func showNotice(_ text: String) {
+        noticePanel?.orderOut(nil)
+        guard let anchor = panel?.frame else { return }
+        let host = NSHostingView(rootView: Text(text)
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 420)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(Capsule().fill(Color(white: 0.12).opacity(0.97)).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))))
+            .environment(\.colorScheme, .dark))
+        let size = host.fittingSize
+        let p = FloatingPanel(contentRect: CGRect(x: anchor.midX - size.width / 2, y: anchor.minY - size.height - 10,
+                                                  width: size.width, height: size.height))
+        p.contentView = host
+        p.orderFrontRegardless()
+        noticePanel = p
+        NSAccessibility.post(element: host, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak p] in
+            guard let p, self?.noticePanel === p else { return }
+            p.orderOut(nil)
+            self?.noticePanel = nil
         }
     }
 
@@ -106,7 +147,7 @@ final class RecordingToolbar: ObservableObject {
         panel?.orderOut(nil)
         panel = nil
         closePicker()
-        RecordingCoordinator.shared.start()
+        RecordingCoordinator.shared.start(fromToolbar: true)
     }
 
     private func showWindowPicker() {
@@ -117,7 +158,7 @@ final class RecordingToolbar: ObservableObject {
             self?.begin(.window)
         }
         let host = NSHostingView(rootView: view.preferredColorScheme(.dark))
-        let p = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 700, height: 520), keyable: true)
+        let p = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 720, height: 600), keyable: true)
         p.contentView = host
         p.center()
         p.makeKeyAndOrderFront(nil)
@@ -129,7 +170,7 @@ final class RecordingToolbar: ObservableObject {
         closePicker()
         let binding = Binding<Bool>(get: { true }, set: { [weak self] shown in if !shown { self?.closePicker() } })
         let host = NSHostingView(rootView: AudioAppPicker(isPresented: binding).environment(\.colorScheme, .dark))
-        let p = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 360, height: 440), keyable: true)
+        let p = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 360, height: 470), keyable: true)
         p.contentView = host
         p.center()
         p.makeKeyAndOrderFront(nil)
@@ -208,14 +249,14 @@ struct RecordingToolbarView: View {
                 deviceMenu(icon: settings.cameraEnabled ? "video" : "video.slash",
                            title: settings.cameraEnabled ? name(catalog.cameras, settings.cameraID) ?? "Camera" : "No camera",
                            on: settings.cameraEnabled) {
-                    Button { settings.cameraEnabled = false; CameraPreview.shared.refresh() } label: { check("No camera", !settings.cameraEnabled) }
+                    MenuCheck("No camera", !settings.cameraEnabled) { settings.cameraEnabled = false; CameraPreview.shared.refresh() }
                     Divider()
                     ForEach(catalog.cameras) { cam in
-                        Button {
+                        MenuCheck(cam.name, settings.cameraEnabled && settings.cameraID == cam.id) {
                             settings.cameraID = cam.id
                             settings.cameraEnabled = true
                             CameraPreview.shared.refresh()
-                        } label: { check(cam.name, settings.cameraEnabled && settings.cameraID == cam.id) }
+                        }
                     }
                     Divider()
                     Toggle("Show camera preview", isOn: Binding(get: { app.showCameraPreview }, set: {
@@ -226,13 +267,13 @@ struct RecordingToolbarView: View {
                 deviceMenu(icon: settings.micEnabled ? "mic" : "mic.slash",
                            title: settings.micEnabled ? name(catalog.microphones, settings.micID) ?? "Microphone" : "No microphone",
                            on: settings.micEnabled) {
-                    Button { settings.micEnabled = false } label: { check("No microphone", !settings.micEnabled) }
+                    MenuCheck("No microphone", !settings.micEnabled) { settings.micEnabled = false }
                     Divider()
                     ForEach(catalog.microphones) { mic in
-                        Button {
+                        MenuCheck(mic.name, settings.micEnabled && settings.micID == mic.id) {
                             settings.micID = mic.id
                             settings.micEnabled = true
-                        } label: { check(mic.name, settings.micEnabled && settings.micID == mic.id) }
+                        }
                     }
                     Divider()
                     Button("Mic Mode (Voice Isolation)…") { AVCaptureDevice.showSystemUserInterface(.microphoneModes) }
@@ -241,14 +282,14 @@ struct RecordingToolbarView: View {
                            title: !settings.systemAudio ? "No system audio"
                                : (settings.audioFromSelectedApps ? "\(settings.audioApps.count) app\(settings.audioApps.count == 1 ? "" : "s")" : "System audio"),
                            on: settings.systemAudio) {
-                    Button { settings.systemAudio = true; settings.audioFromSelectedApps = false } label: {
-                        check("Record system audio from all apps", settings.systemAudio && !settings.audioFromSelectedApps)
+                    MenuCheck("Record system audio from all apps", settings.systemAudio && !settings.audioFromSelectedApps) {
+                        settings.systemAudio = true; settings.audioFromSelectedApps = false
                     }
-                    Button { toolbar.showAudioAppPicker() } label: {
-                        check("Record system audio from selected apps…", settings.systemAudio && settings.audioFromSelectedApps)
+                    MenuCheck("Record system audio from selected apps…", settings.systemAudio && settings.audioFromSelectedApps) {
+                        toolbar.showAudioAppPicker()
                     }
                     Divider()
-                    Button { settings.systemAudio = false } label: { check("Don't record system audio", !settings.systemAudio) }
+                    MenuCheck("Don't record system audio", !settings.systemAudio) { settings.systemAudio = false }
                 }
                 .help("Record the sound your Mac plays")
             }
@@ -278,7 +319,8 @@ struct RecordingToolbarView: View {
                         settings.recordKeystrokes = on
                         if on && !KeystrokeRecorder.isTrusted { KeystrokeRecorder.requestTrust() }
                     }))
-                    Button(SpeakerNotes.shared.isVisible ? "Hide Speaker Notes" : "Show Speaker Notes") { SpeakerNotes.shared.toggle() }
+                    Button((SpeakerNotes.shared.isVisible ? "Hide Speaker Notes" : "Show Speaker Notes")
+                           + (app.shortcuts[.notes].map { "   \($0.display)" } ?? "")) { SpeakerNotes.shared.toggle() }
                 }
                 Section("After recording") {
                     Toggle("Create zooms automatically", isOn: $settings.autoZoom)
@@ -342,11 +384,6 @@ struct RecordingToolbarView: View {
 
     private func name(_ devices: [DeviceCatalog.Device], _ id: String) -> String? {
         devices.first { $0.id == id }?.name
-    }
-
-    @ViewBuilder
-    private func check(_ title: String, _ on: Bool) -> some View {
-        if on { Label(title, systemImage: "checkmark") } else { Text(title) }
     }
 
     private func pill(icon: String, title: String, on: Bool) -> some View {
@@ -576,6 +613,8 @@ private struct AudioAppPicker: View {
     @Binding var isPresented: Bool
     @ObservedObject private var settings = RecorderSettings.shared
     @State private var apps: [(id: String, name: String, icon: NSImage?)] = []
+    /// Edited locally; only "Use N Apps" saves it, so Cancel really cancels.
+    @State private var selected: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -585,9 +624,9 @@ private struct AudioAppPicker: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(apps, id: \.id) { app in
-                        let on = settings.audioApps.contains(app.id)
+                        let on = selected.contains(app.id)
                         Button {
-                            if on { settings.audioApps.removeAll { $0 == app.id } } else { settings.audioApps.append(app.id) }
+                            if on { selected.removeAll { $0 == app.id } } else { selected.append(app.id) }
                         } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
@@ -600,31 +639,65 @@ private struct AudioAppPicker: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
             }
+            Button { addApp() } label: { Label("Add an App That Isn't Running…", systemImage: "plus") }
+                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.white.opacity(0.75))
             HStack {
-                Button("Cancel") { isPresented = false }.buttonStyle(SecondaryButtonStyle())
+                Button("Cancel") { isPresented = false }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Use \(settings.audioApps.count) App\(settings.audioApps.count == 1 ? "" : "s")") {
+                Button("Use \(selected.count) App\(selected.count == 1 ? "" : "s")") {
+                    settings.audioApps = selected
                     settings.systemAudio = true
-                    settings.audioFromSelectedApps = !settings.audioApps.isEmpty
+                    settings.audioFromSelectedApps = true
                     isPresented = false
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(settings.audioApps.isEmpty)
+                .disabled(selected.isEmpty)
             }
         }
         .foregroundStyle(.white)
         .padding(18)
-        .frame(width: 360, height: 440)
+        .frame(width: 360, height: 470)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(white: 0.1).opacity(0.97)))
         .task {
-            // Regular apps that are running now, alphabetically.
-            apps = NSWorkspace.shared.runningApplications
+            selected = settings.audioApps
+            // Regular apps that are running now, plus chosen apps that aren't, alphabetically.
+            var list = NSWorkspace.shared.runningApplications
                 .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
                 .compactMap { a in a.bundleIdentifier.map { (id: $0, name: a.localizedName ?? $0, icon: a.icon) } }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            for id in selected where !list.contains(where: { $0.id == id }) {
+                if let entry = Self.entry(bundleID: id) { list.append(entry) }
+            }
+            apps = Self.sorted(list)
         }
+    }
+
+    private func addApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.level = .modalPanel
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let id = Bundle(url: url)?.bundleIdentifier, id != Bundle.main.bundleIdentifier else { continue }
+            if !apps.contains(where: { $0.id == id }), let entry = Self.entry(bundleID: id) { apps = Self.sorted(apps + [entry]) }
+            if !selected.contains(id) { selected.append(id) }
+        }
+    }
+
+    private static func entry(bundleID: String) -> (id: String, name: String, icon: NSImage?)? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        return (id: bundleID, name: name, icon: NSWorkspace.shared.icon(forFile: url.path))
+    }
+
+    private static func sorted(_ list: [(id: String, name: String, icon: NSImage?)]) -> [(id: String, name: String, icon: NSImage?)] {
+        list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }

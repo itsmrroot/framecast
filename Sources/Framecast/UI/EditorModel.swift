@@ -43,7 +43,7 @@ final class EditorModel: ObservableObject {
     /// Playback speed of the preview (negative plays backward), driven by J / K / L.
     @Published private(set) var playbackRate: Float = 1
     /// Full renders the preview at 1920 px; half at 960 px for slower Macs.
-    @Published var previewFull = true { didSet { scheduleRenderRefresh() } }
+    @Published var previewQuality = PreviewQuality.full { didSet { scheduleRenderRefresh() } }
 
     let player = AVPlayer()
     private(set) var assets: ProjectAssets?
@@ -250,7 +250,7 @@ final class EditorModel: ObservableObject {
     }
 
     private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
-        let size = model.outputSize(longSide: previewFull ? 1920 : 960)
+        let size = model.outputSize(longSide: previewQuality.longSide)
         return CompositionBuilder.videoComposition(model: model, renderSize: size, fps: 60, duration: built.duration)
     }
 
@@ -281,6 +281,8 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    private var renderNudge = false
+
     private func refreshRender() {
         guard let built, let item = player.currentItem else { return }
         let model = makeRenderModel(for: built)
@@ -289,7 +291,9 @@ final class EditorModel: ObservableObject {
         item.videoComposition = previewVideoComposition(model, built: built)
         item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style)
         if !isPlaying {
-            player.seek(to: CMTime(sec: compTime), toleranceBefore: .zero, toleranceAfter: .zero)
+            // A seek to the exact same time can reuse the old frame, so nudge it to force a fresh render.
+            renderNudge.toggle()
+            player.seek(to: CMTime(sec: compTime + (renderNudge ? 0.0005 : 0)), toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
@@ -771,5 +775,21 @@ final class EditorModel: ObservableObject {
 private extension EditorModel.Snapshot {
     init(_ d: ProjectDocument) {
         self.init(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style, effects: d.effects, captions: d.captions)
+    }
+}
+
+/// How sharp the editor preview renders; lower is faster for long 4K projects. Export is always full quality.
+enum PreviewQuality: String, CaseIterable, Identifiable {
+    case full, half, quarter
+    var id: String { rawValue }
+    var longSide: Int {
+        switch self { case .full: return 1920; case .half: return 960; case .quarter: return 480 }
+    }
+    var short: String { rawValue.capitalized }
+    var label: String {
+        switch self { case .full: return "Full"; case .half: return "Half (faster)"; case .quarter: return "Quarter (fastest)" }
+    }
+    var next: PreviewQuality {
+        switch self { case .full: return .half; case .half: return .quarter; case .quarter: return .full }
     }
 }

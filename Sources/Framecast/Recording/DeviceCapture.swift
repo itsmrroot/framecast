@@ -21,9 +21,13 @@ final class DeviceCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private var stopped = false
     private var audioOrder = AudioOrderGuard()
     private(set) var hasAudio = false
+    private static var discoveryEnabled = false
 
-    /// Lets macOS expose connected iOS devices as capture devices. Call once at launch.
+    /// Lets macOS expose connected iOS devices as capture devices. Only called once Device mode is chosen:
+    /// while it's on, macOS probes for iPhones (and may show iPhone Mirroring alerts).
     static func enableDiscovery() {
+        guard !discoveryEnabled else { return }
+        discoveryEnabled = true
         var prop = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyAllowScreenCaptureDevices),
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),

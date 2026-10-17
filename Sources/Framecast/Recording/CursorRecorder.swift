@@ -17,6 +17,9 @@ final class CursorRecorder: @unchecked Sendable {
     private var track = CursorTrack()
     private var lastPoint: CGPoint?
     private var lastButtons = 0
+    private var clickMonitor: Any?
+    /// Set once the event monitor delivers a click; polling then stops reporting clicks to avoid doubles.
+    private var monitorWorks = false
     /// Framecast's own windows (global top-left points): clicks there aren't part of the recording.
     private var ignoredRects: [CGRect] = []
 
@@ -43,6 +46,11 @@ final class CursorRecorder: @unchecked Sendable {
         timer = t
 
         DispatchQueue.main.async { [self] in
+            // Clicks come from real mouse-down events (with their own timestamps), so even a quick tap
+            // that's shorter than the polling interval is caught.
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
+                self?.recordClick(e)
+            }
             pollShape()
             let st = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in self?.pollShape() }
             RunLoop.main.add(st, forMode: .common)
@@ -56,6 +64,8 @@ final class CursorRecorder: @unchecked Sendable {
         DispatchQueue.main.async { [self] in
             shapeTimer?.invalidate()
             shapeTimer = nil
+            if let m = clickMonitor { NSEvent.removeMonitor(m) }
+            clickMonitor = nil
         }
         return lock.withLock { track }
     }
@@ -76,14 +86,36 @@ final class CursorRecorder: @unchecked Sendable {
                 track.samples.append(CursorSample(t: t, x: p.x, y: p.y))
                 lastPoint = p
             }
-            for button in 0..<2 {
-                let mask = 1 << button
-                if buttons & mask != 0 && lastButtons & mask == 0,
-                   !ignoredRects.contains(where: { $0.contains(location) }) {
-                    track.clicks.append(ClickEvent(t: t, x: p.x, y: p.y, button: button))
+            // Fallback until the event monitor proves it's delivering clicks.
+            if !monitorWorks {
+                for button in 0..<2 {
+                    let mask = 1 << button
+                    if buttons & mask != 0 && lastButtons & mask == 0,
+                       !ignoredRects.contains(where: { $0.contains(location) }) {
+                        track.clicks.append(ClickEvent(t: t, x: p.x, y: p.y, button: button))
+                    }
                 }
             }
             lastButtons = buttons
+        }
+    }
+
+    /// A click from the global event monitor (main thread). Clicks on Framecast's own windows never arrive here.
+    private func recordClick(_ e: NSEvent) {
+        let host = CMTime(seconds: e.timestamp, preferredTimescale: 1_000_000_000)
+        guard let t = clock.recordingTime(hostTime: host) ?? clock.recordingTime(hostTime: RecordingClock.hostNow),
+              let location = e.cgEvent?.location ?? CGEvent(source: nil)?.location else { return }
+        let p = normalized(location)
+        let button = e.type == .rightMouseDown ? 1 : 0
+        lock.withLock {
+            guard !ignoredRects.contains(where: { $0.contains(location) }) else { return }
+            if !monitorWorks {
+                monitorWorks = true
+                // Drop a poll-detected duplicate of this same press.
+                track.clicks.removeAll { abs($0.t - t) < 0.05 && $0.button == button }
+            }
+            track.clicks.append(ClickEvent(t: t, x: p.x, y: p.y, button: button))
+            track.clicks.sort { $0.t < $1.t }
         }
     }
 

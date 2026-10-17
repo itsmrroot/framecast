@@ -104,7 +104,8 @@ final class SourceCatalog: ObservableObject {
         hasScreenPermission = CGPreflightScreenCaptureAccess()
         guard hasScreenPermission else { return }
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            // Off-screen windows too (other Spaces, behind full-screen apps), so every real window can be picked.
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
             displays = content.displays
             let pid = ProcessInfo.processInfo.processIdentifier
             windows = content.windows.filter { w in
@@ -112,6 +113,13 @@ final class SourceCatalog: ObservableObject {
                     && w.owningApplication?.processID != pid
                     && w.owningApplication != nil
                     && !(w.owningApplication?.applicationName.isEmpty ?? true)
+                    // Off-screen ones only when titled; untitled hidden windows are usually app internals.
+                    && (w.isOnScreen || !(w.title ?? "").isEmpty)
+            }
+            .sorted { a, b in
+                if a.isOnScreen != b.isOnScreen { return a.isOnScreen }
+                let an = a.owningApplication?.applicationName ?? "", bn = b.owningApplication?.applicationName ?? ""
+                return an.localizedCaseInsensitiveCompare(bn) == .orderedAscending
             }
             if !displays.contains(where: { $0.displayID == settings.displayID }) {
                 settings.displayID = displays.first?.displayID ?? CGMainDisplayID()

@@ -36,8 +36,9 @@ struct ExportSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 560)
+        .frame(width: 600)
         .background(Theme.panel)
+        .focusEffectDisabled() // no leftover focus ring on the format tile
     }
 
     // MARK: Setup
@@ -53,9 +54,11 @@ struct ExportSheet: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 260)
                 }
                 row("Frame rate") {
+                    // Segmented, not pop-up menus: Esc in an open pop-up closed the whole sheet.
                     Picker("", selection: $settings.fps) {
-                        ForEach(ExportSettings.frameRates, id: \.self) { Text("\($0) fps").tag($0) }
-                    }.labelsHidden().frame(width: 140)
+                        ForEach(ExportSettings.frameRates, id: \.self) { Text("\($0)").tag($0) }
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 300)
+                    Text("fps").font(.system(size: 11)).foregroundStyle(Theme.textDim)
                 }
                 row("Compression") {
                     Picker("", selection: $settings.quality) {
@@ -67,7 +70,7 @@ struct ExportSheet: View {
                 row("Codec") {
                     Picker("", selection: $settings.codec) {
                         ForEach(ExportCodec.allCases) { c in Text(c.label).tag(c) }
-                    }.labelsHidden().frame(width: 260)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 340)
                 }
             } else {
                 row("Width") {
@@ -104,6 +107,10 @@ struct ExportSheet: View {
             let bitrate = size.width * size.height * Double(settings.fps) * settings.quality.bitsPerPixel
             let mb = bitrate * duration / 8 / 1_000_000
             text += String(format: " · about %.0f MB", max(1, mb))
+        } else {
+            // Rough: screen recordings compress to about 0.1 byte per pixel per frame as GIF.
+            let mb = size.width * size.height * Double(settings.gifFPS) * duration * 0.1 / 1_000_000
+            text += String(format: " · roughly %.0f MB", max(1, mb))
         }
         return Text(text)
             .font(.system(size: 11.5).monospacedDigit())
@@ -198,13 +205,9 @@ struct ExportSheet: View {
     // MARK: Run
 
     private func start() {
-        let panel = NSSavePanel()
-        let ext = settings.format.fileExtension
-        panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")).\(ext)"
-        panel.allowedContentTypes = [settings.format == .mp4 ? .mpeg4Movie : .gif]
-        panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let panel = SavePanels.make(name: model.doc.name, ext: settings.format.fileExtension,
+                                    types: [settings.format == .mp4 ? .mpeg4Movie : .gif])
+        guard let url = SavePanels.run(panel) else { return }
         guard let job = model.exportJob() else { return }
 
         model.player.pause()

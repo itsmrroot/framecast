@@ -315,26 +315,54 @@ struct WindowPickerSheet: View {
     @ObservedObject var catalog: SourceCatalog
     @ObservedObject var settings: RecorderSettings
     @Binding var isPresented: Bool
-    /// Called after a window is picked (the recording toolbar starts recording right away).
+    /// When set (recording toolbar), picking selects the window and a Start button appears below.
     var onPick: (() -> Void)? = nil
     @State private var thumbnails: [CGWindowID: NSImage] = [:]
+    @State private var search = ""
+    @State private var picked: CGWindowID?
+
+    private var shown: [SCWindow] {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return catalog.windows }
+        return catalog.windows.filter {
+            ($0.owningApplication?.applicationName ?? "").localizedCaseInsensitiveContains(q)
+                || ($0.title ?? "").localizedCaseInsensitiveContains(q)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Choose a window").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Button("Cancel") { isPresented = false }.buttonStyle(SecondaryButtonStyle())
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
+                    TextField("Search apps and windows", text: $search).textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 10).frame(width: 220, height: 28)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill.opacity(0.07)))
+                Button("Cancel") { isPresented = false }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .keyboardShortcut(.cancelAction)
             }
             ScrollView {
+                if shown.isEmpty {
+                    Text(catalog.windows.isEmpty ? "No windows to record." : "No windows match “\(search)”.")
+                        .font(.system(size: 13)).foregroundStyle(Theme.textDim)
+                        .frame(maxWidth: .infinity).padding(.top, 60)
+                }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], spacing: 14) {
-                    ForEach(catalog.windows, id: \.windowID) { w in
+                    ForEach(shown, id: \.windowID) { w in
+                        let isPicked = (onPick == nil ? settings.windowID : picked) == w.windowID
                         Button {
                             settings.windowID = w.windowID
                             settings.windowTitle = [w.owningApplication?.applicationName, w.title]
                                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " — ")
-                            isPresented = false
-                            onPick?()
+                            if onPick == nil {
+                                isPresented = false
+                            } else {
+                                picked = w.windowID
+                            }
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack {
@@ -347,22 +375,50 @@ struct WindowPickerSheet: View {
                                 }
                                 .frame(height: 120)
                                 .overlay(RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(settings.windowID == w.windowID ? Theme.accent : Theme.border, lineWidth: settings.windowID == w.windowID ? 2 : 1))
-                                Text(w.owningApplication?.applicationName ?? "Window")
-                                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                    .strokeBorder(isPicked ? Theme.accent : Theme.border, lineWidth: isPicked ? 2 : 1))
+                                HStack(spacing: 4) {
+                                    Text(w.owningApplication?.applicationName ?? "Window")
+                                        .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                    if !w.isOnScreen {
+                                        Text("Hidden").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Theme.textDim)
+                                            .padding(.horizontal, 5).padding(.vertical, 1)
+                                            .background(Capsule().fill(Theme.fill.opacity(0.08)))
+                                            .help("On another Space or behind other windows")
+                                    }
+                                }
                                 Text(w.title ?? "").font(.system(size: 11)).foregroundStyle(Theme.textDim).lineLimit(1)
                             }
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(isPicked ? .isSelected : [])
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            if onPick != nil { start() }
+                        })
                         .task { await loadThumbnail(w) }
                     }
                 }
             }
+            if onPick != nil {
+                Divider()
+                HStack(spacing: 16) {
+                    RecordingNameFields(width: 300)
+                    Spacer()
+                    StartRecordingButton { start() }
+                        .disabled(picked == nil)
+                        .opacity(picked == nil ? 0.5 : 1)
+                }
+            }
         }
         .padding(20)
-        .frame(width: 700, height: 520)
+        .frame(width: onPick == nil ? 700 : 720, height: onPick == nil ? 520 : 600)
         .background(Theme.panel)
+    }
+
+    private func start() {
+        guard picked != nil else { return }
+        isPresented = false
+        onPick?()
     }
 
     private func loadThumbnail(_ w: SCWindow) async {
@@ -385,7 +441,6 @@ private struct LibraryView: View {
     @ObservedObject var library: ProjectLibrary
     @State private var renaming: ProjectSummary?
     @State private var renameText = ""
-    @State private var deleting: ProjectSummary?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -422,7 +477,7 @@ private struct LibraryView: View {
                                     Button("Rename…") { renameText = p.name; renaming = p }
                                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([p.folder]) }
                                     Divider()
-                                    Button("Move to Trash", role: .destructive) { deleting = p }
+                                    Button("Move to Trash…") { if TrashConfirmation.run(name: p.name) { library.delete(p) } }
                                 }
                         }
                     }
@@ -444,12 +499,6 @@ private struct LibraryView: View {
                 }
             }
             .padding(20)
-        }
-        .confirmationDialog("Move this recording to the Trash?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { p in
-            Button("Move to Trash", role: .destructive) { library.delete(p); deleting = nil }
-            Button("Cancel", role: .cancel) { deleting = nil }
-        } message: { p in
-            Text("“\(p.name)” will be moved to the Trash.")
         }
     }
 

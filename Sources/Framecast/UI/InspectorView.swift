@@ -55,6 +55,7 @@ struct InspectorView: View {
                     }
                     .padding(16)
                 }
+                .id(ui.inspectorTab) // each panel opens at the top
             }
         }
     }
@@ -1051,9 +1052,10 @@ private struct RegionPicker: View {
 
 private struct CaptionsTab: View {
     @ObservedObject var model: EditorModel
-    @State private var locale = Locale.current
+    @State private var locale = Transcriber.defaultLocale()
     @State private var working = false
     @State private var progress = 0.0
+    @State private var status = ""
     @State private var error: String?
 
     private var hasAudio: Bool { model.doc.info.hasMic || model.doc.info.hasSystemAudio }
@@ -1079,7 +1081,7 @@ private struct CaptionsTab: View {
                 if working {
                     ProgressView(value: progress).tint(Theme.accent)
                     HStack {
-                        Text("Transcribing… \(Int(progress * 100))%").font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                        Text("\(status) \(Int(progress * 100))%").font(.system(size: 11)).foregroundStyle(Theme.textDim)
                         Spacer()
                         Button("Cancel") { model.captionTask?.cancel() }.buttonStyle(SecondaryButtonStyle())
                     }
@@ -1097,12 +1099,6 @@ private struct CaptionsTab: View {
                         .font(.system(size: 11)).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-        }
-        .onAppear {
-            if !Transcriber.supportedLocales.contains(where: { $0.identifier == locale.identifier }) {
-                locale = Transcriber.supportedLocales.first { $0.language.languageCode == Locale.current.language.languageCode }
-                    ?? Locale(identifier: "en-US")
             }
         }
 
@@ -1133,16 +1129,17 @@ private struct CaptionsTab: View {
         error = nil
         working = true
         progress = 0
+        status = "Preparing audio…"
         let folder = model.folder, info = model.doc.info, loc = locale
         model.captionTask?.cancel()
         let model = self.model
         model.captionTask = Task {
             do {
-                let cues = try await Transcriber.transcribe(folder: folder, info: info, locale: loc) { p in
-                    DispatchQueue.main.async { progress = p }
+                let cues = try await Transcriber.transcribe(folder: folder, info: info, locale: loc) { p, s in
+                    DispatchQueue.main.async { progress = p; status = s }
                 }
                 guard !Task.isCancelled, !model.isTrashed else { return }
-                if cues.isEmpty { error = "No speech was found in the audio." } else { model.setCaptions(cues) }
+                model.setCaptions(cues)
             } catch is CancellationError {
             } catch {
                 self.error = error.localizedDescription
@@ -1152,11 +1149,8 @@ private struct CaptionsTab: View {
     }
 
     private func exportSRT() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")).srt"
-        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
-        panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let panel = SavePanels.make(name: model.doc.name, ext: "srt", types: [UTType(filenameExtension: "srt") ?? .plainText])
+        guard let url = SavePanels.run(panel) else { return }
         try? model.srt().write(to: url, atomically: true, encoding: .utf8)
     }
 }

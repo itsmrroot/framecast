@@ -25,12 +25,15 @@ private struct CountdownPill: View {
             }
             .buttonStyle(.plain)
             .help("Cancel")
+            .accessibilityLabel("Cancel recording")
             VStack(alignment: .leading, spacing: 1) {
                 Text("Get ready…").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                 Text("Recording starts in \(model.remaining)s").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                     .contentTransition(.numericText(countsDown: true))
                     .animation(.easeOut(duration: 0.2), value: model.remaining)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Recording starts in \(model.remaining) seconds")
             Button { model.skipped = true } label: {
                 HStack(spacing: 8) {
                     ZStack {
@@ -47,7 +50,10 @@ private struct CountdownPill: View {
             }
             .buttonStyle(.plain)
             .help("Start recording now")
+            .accessibilityLabel("Start recording now")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Countdown")
         .padding(.horizontal, 14)
         .frame(height: 58)
         .background(Capsule().fill(Color(white: 0.1).opacity(0.96)).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))))
@@ -91,6 +97,11 @@ enum Countdown {
 
 struct RecordingControlsView: View {
     @ObservedObject var coordinator: RecordingCoordinator
+    /// Restart and Discard throw away the take, so after 10 s they need a second click (a dialog would be recorded).
+    @State private var confirming: Action?
+    @State private var confirmTask: Task<Void, Never>?
+
+    enum Action { case restart, discard }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -98,24 +109,33 @@ struct RecordingControlsView: View {
                 .fill(coordinator.phase == .paused ? Color.orange : Color.red)
                 .frame(width: 10, height: 10)
                 .opacity(coordinator.phase == .paused ? 1 : (Int(coordinator.elapsed * 2) % 2 == 0 ? 1 : 0.4))
-            Text(formatTime(coordinator.elapsed))
+            Text(confirming == nil ? formatTime(coordinator.elapsed) : "Sure?")
                 .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white)
                 .frame(minWidth: 44, alignment: .leading)
 
             Divider().frame(height: 18).overlay(Color.white.opacity(0.2))
 
-            ControlButton(icon: "stop.fill", tint: .red, help: "Stop recording (⌘⇧2)") {
+            ControlButton(icon: "stop.fill", tint: .red, help: "Stop recording (⌘⇧2)", label: "Stop recording") {
                 coordinator.stop()
             }
-            ControlButton(icon: coordinator.phase == .paused ? "play.fill" : "pause.fill", help: "Pause / resume") {
+            ControlButton(icon: coordinator.phase == .paused ? "play.fill" : "pause.fill", help: "Pause / resume",
+                          label: coordinator.phase == .paused ? "Resume recording" : "Pause recording") {
                 coordinator.togglePause()
             }
-            ControlButton(icon: "arrow.counterclockwise", help: "Restart recording") {
-                coordinator.restart()
+            if confirming == .restart {
+                confirmButton("arrow.counterclockwise", "Click again to restart") { coordinator.restart() }
+            } else {
+                ControlButton(icon: "arrow.counterclockwise", help: "Restart recording", label: "Restart recording") {
+                    guarded(.restart) { coordinator.restart() }
+                }
             }
-            ControlButton(icon: "trash", help: "Cancel and discard") {
-                coordinator.cancel()
+            if confirming == .discard {
+                confirmButton("trash", "Click again to discard") { coordinator.cancel() }
+            } else {
+                ControlButton(icon: "trash", help: "Cancel and discard", label: "Discard recording") {
+                    guarded(.discard) { coordinator.cancel() }
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -126,6 +146,35 @@ struct RecordingControlsView: View {
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
         )
         .fixedSize()
+        .animation(.easeOut(duration: 0.15), value: confirming)
+    }
+
+    private func guarded(_ action: Action, run: @escaping () -> Void) {
+        guard coordinator.elapsed > 10 else { run(); return }
+        confirming = action
+        confirmTask?.cancel()
+        confirmTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if !Task.isCancelled { confirming = nil }
+        }
+    }
+
+    /// Same size as the button it replaces (the panel doesn't resize), filled red until clicked or 3 s pass.
+    private func confirmButton(_ icon: String, _ title: String, run: @escaping () -> Void) -> some View {
+        Button {
+            confirmTask?.cancel()
+            confirming = nil
+            run()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.red))
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
     }
 }
 
@@ -133,6 +182,7 @@ private struct ControlButton: View {
     let icon: String
     var tint: Color = .white
     let help: String
+    let label: String
     let action: () -> Void
     @State private var hover = false
 
@@ -147,6 +197,7 @@ private struct ControlButton: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .help(help)
+        .accessibilityLabel(label)
     }
 }
 

@@ -8,3 +8,5 @@ build
 # Reference material from exploring other apps (screenshots of their UI); kept local
 docs/screen-studio/
 docs/screen-studio-comparison.md
+docs/qa/
+docs/qa-report.md

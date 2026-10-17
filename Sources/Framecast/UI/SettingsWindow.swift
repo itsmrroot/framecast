@@ -37,6 +37,9 @@ struct SettingsWindowView: View {
     @ObservedObject private var nav = SettingsNavigation.shared
     private var tab: SettingsTab { nav.tab }
 
+    /// Tall enough for the longest tab, but never taller than the screen.
+    static var height: CGFloat { min(760, (NSScreen.main?.visibleFrame.height ?? 800) - 40) }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -72,8 +75,9 @@ struct SettingsWindowView: View {
                 .padding(.horizontal, 36)
                 .padding(.vertical, 24)
             }
+            .id(tab) // each tab opens at the top
         }
-        .frame(width: 760, height: 620)
+        .frame(width: 760, height: Self.height)
         .background(Theme.bg)
         .focusEffectDisabled()
     }
@@ -169,8 +173,12 @@ private struct GeneralSettings: View {
                 let alert = NSAlert()
                 alert.messageText = "Reset all preferences?"
                 alert.informativeText = "Framecast will quit. Open it again to start with the default settings."
-                alert.addButton(withTitle: "Reset and Quit")
-                alert.addButton(withTitle: "Cancel")
+                // Cancel is the default (Return); resetting needs a deliberate click.
+                let reset = alert.addButton(withTitle: "Reset and Quit")
+                reset.hasDestructiveAction = true
+                reset.keyEquivalent = ""
+                let cancel = alert.addButton(withTitle: "Cancel")
+                cancel.keyEquivalent = "\r"
                 if alert.runModal() == .alertFirstButtonReturn {
                     app.resetAll()
                     NSApp.terminate(nil)

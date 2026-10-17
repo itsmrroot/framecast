@@ -53,15 +53,16 @@ final class AreaEditorModel: ObservableObject {
 
     func setSize(width: CGFloat, height: CGFloat) {
         guard let r = rect else { return }
-        let w = min(max(20, width), bounds.width), h = min(max(20, height), bounds.height)
-        rect = clampToBounds(CGRect(x: r.midX - w / 2, y: r.midY - h / 2, width: w, height: h))
+        let w = min(max(20, width), bounds.width).rounded(), h = min(max(20, height), bounds.height).rounded()
+        rect = clampToBounds(CGRect(x: (r.midX - w / 2).rounded(), y: (r.midY - h / 2).rounded(), width: w, height: h))
     }
 
     func applyAspect() {
         guard let ratio = aspect.ratio, let r = rect else { return }
         var w = r.width, h = r.height
         if w / h > ratio { w = h * ratio } else { h = w / ratio }
-        rect = clampToBounds(CGRect(x: r.midX - w / 2, y: r.midY - h / 2, width: w, height: h))
+        w = w.rounded(); h = h.rounded()
+        rect = clampToBounds(CGRect(x: (r.midX - w / 2).rounded(), y: (r.midY - h / 2).rounded(), width: w, height: h))
     }
 
     func clampToBounds(_ r: CGRect) -> CGRect {
@@ -75,7 +76,25 @@ final class AreaEditorModel: ObservableObject {
         guard !saved.contains(size) else { return }
         saved.insert(size, at: 0)
         saved = Array(saved.prefix(8))
-        UserDefaults.standard.set(saved.map { [$0.width, $0.height] }, forKey: "rec.savedAreas")
+        storeSaved()
+    }
+
+    func removeSaved(_ size: CGSize) {
+        saved.removeAll { $0 == size }
+        storeSaved()
+    }
+
+    func clearSaved() {
+        saved = []
+        storeSaved()
+    }
+
+    private func storeSaved() {
+        if saved.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "rec.savedAreas")
+        } else {
+            UserDefaults.standard.set(saved.map { [$0.width, $0.height] }, forKey: "rec.savedAreas")
+        }
     }
 
     private static func loadSaved() -> [CGSize] {
@@ -133,7 +152,7 @@ private final class AreaSelectionView: NSView {
         default:
             r = resize(d.rect, mode: d.mode, dx: dx, dy: dy)
         }
-        model.rect = model.clampToBounds(r)
+        model.rect = model.clampToBounds(CGRect(x: r.minX.rounded(), y: r.minY.rounded(), width: r.width.rounded(), height: r.height.rounded()))
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -236,17 +255,22 @@ private struct AreaControls: View {
     @ObservedObject private var rec = RecorderSettings.shared
     @State private var w = ""
     @State private var h = ""
+    @FocusState private var focus: Dimension?
+
+    enum Dimension { case width, height }
 
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 4) {
-                field($w) { apply() }
+                field($w, .width)
                 Text("×").foregroundStyle(.white.opacity(0.6))
-                field($h) { apply() }
+                field($h, .height)
             }
+            // Typed sizes apply when the field loses focus too, not only on Return.
+            .onChange(of: focus) { old, _ in if let old { apply(old) } }
             Menu {
                 ForEach(AreaAspect.allCases) { a in
-                    Button { model.aspect = a } label: { if model.aspect == a { Label(a.label, systemImage: "checkmark") } else { Text(a.label) } }
+                    MenuCheck(a.label, model.aspect == a) { model.aspect = a }
                 }
             } label: { Label(model.aspect.label, systemImage: "aspectratio") }
                 .menuStyle(.borderlessButton).fixedSize()
@@ -256,22 +280,40 @@ private struct AreaControls: View {
                     Button("\(Int(s.width)) × \(Int(s.height))") { model.aspect = .any; model.setSize(width: s.width, height: s.height) }
                 }
                 Divider()
-                Button("Save Current Size") { model.saveCurrent() }
+                Button("Save Current Size") { commitPending(); model.saveCurrent() }
+                if !model.saved.isEmpty {
+                    Menu("Remove Saved Size") {
+                        ForEach(model.saved, id: \.self) { s in
+                            Button("\(Int(s.width)) × \(Int(s.height))") { model.removeSaved(s) }
+                        }
+                        Divider()
+                        Button("Remove All") { model.clearSaved() }
+                    }
+                }
             } label: { Label("Saved", systemImage: "bookmark") }
                 .menuStyle(.borderlessButton).fixedSize()
             Rectangle().fill(Color.white.opacity(0.15)).frame(width: 1, height: 22)
             Button("Cancel") { model.finish?(nil) }
                 .buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
             if model.confirmTitle == "Start Recording" {
-                TextField("Name (optional)", text: $rec.nextName)
-                    .textFieldStyle(.plain)
-                    .frame(width: 130, height: 24)
-                    .padding(.horizontal, 6)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.1)))
-                StartRecordingButton { model.finish?(model.rect) }
+                VStack(spacing: 3) {
+                    TextField("Name (optional)", text: $rec.nextName)
+                        .textFieldStyle(.plain)
+                        .frame(width: 150, height: 20)
+                        .padding(.horizontal, 6)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.1)))
+                    TextField("Note (optional)", text: $rec.nextNote)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11))
+                        .frame(width: 150, height: 18)
+                        .padding(.horizontal, 6)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.07)))
+                }
+                StartRecordingButton { commitPending(); model.finish?(model.rect) }
                     .scaleEffect(0.85)
             } else {
                 Button {
+                    commitPending()
                     model.finish?(model.rect)
                 } label: {
                     Label(model.confirmTitle, systemImage: "checkmark.circle")
@@ -286,7 +328,7 @@ private struct AreaControls: View {
         .font(.system(size: 12))
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
-        .frame(height: 46)
+        .frame(height: 50)
         .background(Capsule().fill(Color(white: 0.1).opacity(0.96)).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))))
         .environment(\.colorScheme, .dark)
         .fixedSize()
@@ -294,14 +336,16 @@ private struct AreaControls: View {
         .onChange(of: model.rect) { _, _ in sync() }
     }
 
-    private func field(_ text: Binding<String>, onSubmit: @escaping () -> Void) -> some View {
+    private func field(_ text: Binding<String>, _ dimension: Dimension) -> some View {
         TextField("", text: text)
+            .focused($focus, equals: dimension)
+            .accessibilityLabel(dimension == .width ? "Width" : "Height")
             .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
             .font(.system(size: 12).monospacedDigit())
             .frame(width: 52, height: 24)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.1)))
-            .onSubmit(onSubmit)
+            .onSubmit { apply(dimension) }
     }
 
     private func sync() {
@@ -310,10 +354,20 @@ private struct AreaControls: View {
         h = "\(Int(r.height.rounded()))"
     }
 
-    private func apply() {
-        guard let wv = Double(w), let hv = Double(h) else { sync(); return }
-        model.aspect = .any
+    /// Applies the typed size; with an aspect lock, the other side follows the one that was edited.
+    private func apply(_ edited: Dimension) {
+        guard var wv = Double(w), var hv = Double(h), wv > 0, hv > 0 else { sync(); return }
+        if let ratio = model.aspect.ratio {
+            if edited == .width { hv = wv / ratio } else { wv = hv * ratio }
+        }
         model.setSize(width: wv, height: hv)
+        sync()
+    }
+
+    /// Applies a typed value that hasn't been committed yet (before Save or Start).
+    private func commitPending() {
+        guard let r = model.rect else { return }
+        if w != "\(Int(r.width.rounded()))" { apply(.width) } else if h != "\(Int(r.height.rounded()))" { apply(.height) }
     }
 }
 
@@ -341,7 +395,11 @@ enum AreaSelector {
                 finished = true
                 w.orderOut(nil)
                 window = nil
-                cont.resume(returning: rect.map { CGRect(x: $0.minX, y: screen.frame.height - $0.maxY, width: $0.width, height: $0.height).integral })
+                cont.resume(returning: rect.map {
+                    // Round once (not .integral, which grows the rect by a point when it's off-grid).
+                    CGRect(x: $0.minX.rounded(), y: (screen.frame.height - $0.maxY).rounded(),
+                           width: $0.width.rounded(), height: $0.height.rounded())
+                })
             }
             w.contentView = view
             window = w
@@ -438,41 +496,63 @@ struct StartRecordingButton: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: action) {
-                Label("Start recording", systemImage: "record.circle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .padding(.leading, 18).padding(.trailing, 12)
-                    .frame(height: 42)
-                    .contentShape(Rectangle())
+            Button {
+                // The ▾ menu's closing click must never start a capture.
+                guard Date().timeIntervalSince(StartMenu.lastClosed) > 0.6 else { return }
+                action()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "record.circle").font(.system(size: 15, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Start recording").font(.system(size: 15, weight: .semibold))
+                        Text("then: \(app.afterRecording.shortLabel)").font(.system(size: 10.5)).opacity(0.75)
+                    }
+                }
+                .padding(.leading, 18).padding(.trailing, 12)
+                .frame(height: 42)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
+            .accessibilityLabel("Start recording, then \(app.afterRecording.shortLabel.lowercased())")
             Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 22)
-            Menu {
-                Section("After recording") {
-                    ForEach(AfterRecording.allCases) { a in
-                        Button { app.afterRecording = a } label: {
-                            if app.afterRecording == a { Label(a.label, systemImage: "checkmark") } else { Text(a.label) }
-                        }
-                    }
-                }
-                Divider()
-                Toggle("Automatically create zooms", isOn: $rec.autoZoom)
-                Divider()
-                Button("Quick Export Settings…") { WindowManager.shared.showSettings(tab: .export) }
-            } label: {
+            Button { StartMenu.show() } label: {
                 Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
                     .frame(width: 38, height: 42)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.plain)
             .help("What happens after recording")
+            .accessibilityLabel("After-recording options")
         }
         .foregroundStyle(.white)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent))
         .fixedSize()
+    }
+}
+
+/// The ▾ menu next to Start, as a native menu: real checkmarks, and it can only change settings.
+@MainActor
+enum StartMenu {
+    static var lastClosed = Date.distantPast
+
+    static func show() {
+        let app = AppSettings.shared, rec = RecorderSettings.shared
+        let menu = NSMenu()
+        menu.addItem(.sectionHeader(title: "After recording"))
+        for a in AfterRecording.allCases {
+            let item = ClosureMenuItem(title: a.label) { app.afterRecording = a }
+            item.state = app.afterRecording == a ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let zoom = ClosureMenuItem(title: "Automatically create zooms") { rec.autoZoom.toggle() }
+        zoom.state = rec.autoZoom ? .on : .off
+        menu.addItem(zoom)
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem(title: "Quick Export Settings…") { WindowManager.shared.showSettings(tab: .export) })
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        lastClosed = Date()
     }
 }
 

@@ -132,17 +132,28 @@ enum ClipOps {
     /// Splits clips at the range edges and sets the speed inside the ranges (or removes them when `speed` is nil).
     /// Always keeps at least one clip.
     static func apply(_ ranges: [(Double, Double)], to clips: [Clip], speed: Double?) -> [Clip] {
+        // Pieces shorter than this are nearly impossible to select on the timeline, so they're absorbed.
+        let minPiece = 0.5
+        var merged: [(Double, Double)] = []
+        for r in ranges.sorted(by: { $0.0 < $1.0 }) {
+            if let last = merged.last, r.0 - last.1 < minPiece {
+                merged[merged.count - 1].1 = max(last.1, r.1)
+            } else {
+                merged.append(r)
+            }
+        }
+        let ranges = merged
         var result: [Clip] = []
         for clip in clips.sorted(by: { $0.start < $1.start }) {
             var pieces: [Clip] = []
             var cursor = clip.start
             for (a, b) in ranges.sorted(by: { $0.0 < $1.0 }) {
                 var s = max(a, clip.start), e = min(b, clip.end)
-                guard e - s > 0.2 else { continue }
-                // Never leave slivers of footage behind: absorb tiny gaps into the range.
-                if s - cursor <= 0.05 { s = cursor }
-                if clip.end - e <= 0.05 { e = clip.end }
-                if s - cursor > 0.05 {
+                guard e - s >= minPiece else { continue }
+                // Never leave slivers of footage behind: absorb short gaps into the range.
+                if s - cursor < minPiece { s = cursor }
+                if clip.end - e < minPiece { e = clip.end }
+                if s - cursor > 0.001 {
                     var before = clip
                     before.id = pieces.isEmpty ? clip.id : UUID()
                     before.start = cursor
@@ -159,7 +170,7 @@ enum ClipOps {
                 }
                 cursor = e
             }
-            if clip.end - cursor > 0.05 {
+            if clip.end - cursor > 0.001 {
                 var after = clip
                 after.id = pieces.isEmpty ? clip.id : UUID()
                 after.start = cursor

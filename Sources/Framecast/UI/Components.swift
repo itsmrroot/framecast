@@ -1,6 +1,19 @@
 import SwiftUI
 import AppKit
 
+/// A menu item with a real ✓ when `on` (SwiftUI menus ignore a Label's checkmark image).
+struct MenuCheck: View {
+    let title: String
+    let on: Bool
+    let action: () -> Void
+    init(_ title: String, _ on: Bool, action: @escaping () -> Void) {
+        self.title = title; self.on = on; self.action = action
+    }
+    var body: some View {
+        Toggle(title, isOn: Binding(get: { on }, set: { _ in action() }))
+    }
+}
+
 enum Theme {
     /// A color with separate light- and dark-mode values.
     static func adaptive(light: NSColor, dark: NSColor) -> NSColor {
@@ -139,6 +152,7 @@ struct PillPicker<T: Hashable>: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == opt ? .isSelected : [])
             }
         }
         .padding(2)
@@ -332,5 +346,19 @@ final class PlayerNSView: NSView {
         CATransaction.setDisableActions(true)
         playerLayer.frame = bounds
         CATransaction.commit()
+    }
+}
+
+/// "Move to Trash?" as a plain alert: readable buttons (the destructive style was red on red), and
+/// the item can be put back from the Trash, so the action is the default.
+@MainActor
+enum TrashConfirmation {
+    static func run(name: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Move “\(name)” to the Trash?"
+        alert.informativeText = "You can put it back from the Trash in Finder."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

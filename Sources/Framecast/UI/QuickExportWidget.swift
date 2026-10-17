@@ -16,6 +16,11 @@ final class QuickExportWidget: ObservableObject {
     private var panel: NSPanel?
     private var exporter: Exporter?
     private var task: Task<Void, Never>?
+    private var autoClose: Task<Void, Never>?
+    /// While the pointer is over the widget, it doesn't close by itself.
+    var hovering = false
+    /// Whether the finished export was copied to the clipboard (vs. saved to a chosen file).
+    @Published private(set) var copied = false
 
     func show(folder: URL) {
         close()
@@ -42,6 +47,8 @@ final class QuickExportWidget: ObservableObject {
     func close() {
         task?.cancel()
         task = nil
+        autoClose?.cancel()
+        autoClose = nil
         exporter?.cancel()
         exporter = nil
         panel?.orderOut(nil)
@@ -91,12 +98,29 @@ final class QuickExportWidget: ObservableObject {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.writeObjects([url as NSURL])
                 }
+                copied = destination == nil
                 phase = .done(url)
+                scheduleAutoClose()
             } catch Exporter.ExportError.cancelled {
                 if current() { phase = .ready }
             } catch {
                 if current() { phase = .failed(error.localizedDescription) }
             }
+        }
+    }
+
+    /// "Export complete" goes away after about 8 s without the pointer over it.
+    private func scheduleAutoClose() {
+        autoClose?.cancel()
+        autoClose = Task { [weak self] in
+            var left = 8.0
+            while left > 0 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self, !Task.isCancelled else { return }
+                left = self.hovering ? 8 : left - 0.5
+            }
+            guard let self, case .done = self.phase else { return }
+            self.close()
         }
     }
 }
@@ -123,6 +147,7 @@ private struct QuickExportView: View {
                 Spacer(minLength: 0)
                 Button { widget.close() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
                     .buttonStyle(.plain).foregroundStyle(Theme.textDim).help("Close")
+                    .accessibilityLabel("Close")
             }
             switch widget.phase {
             case .exporting(let p):
@@ -144,6 +169,7 @@ private struct QuickExportView: View {
                     Button { widget.delete() } label: { Image(systemName: "trash") }
                         .buttonStyle(SecondaryButtonStyle())
                         .help("Move the recording to the Trash")
+                        .accessibilityLabel("Move recording to Trash")
                 }
             }
         }
@@ -152,6 +178,7 @@ private struct QuickExportView: View {
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.panel)
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.border)))
         .preferredColorScheme(.dark)
+        .onHover { widget.hovering = $0 }
     }
 
     private var status: String {
@@ -160,7 +187,7 @@ private struct QuickExportView: View {
             let s = AppSettings.shared.exportSettings
             return s.format == .gif ? "GIF" : "MP4 · \(s.resolution.label) · \(s.fps) fps · \(s.quality.label)"
         case .exporting(let p): return "Exporting… \(Int(p * 100))%"
-        case .done: return "Exported and copied. Paste it anywhere."
+        case .done: return widget.copied ? "Exported and copied. Paste it anywhere." : "Exported and saved."
         case .failed(let msg): return msg
         }
     }

@@ -61,11 +61,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let ext = settings.format.fileExtension
         let url: URL
         if toFile {
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")).\(ext)"
-            panel.allowedContentTypes = [settings.format == .mp4 ? .mpeg4Movie : .gif]
-            panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            guard panel.runModal() == .OK, let u = panel.url else { return }
+            let panel = SavePanels.make(name: model.doc.name, ext: ext, types: [settings.format == .mp4 ? .mpeg4Movie : .gif])
+            guard let u = SavePanels.run(panel) else { return }
             url = u
         } else {
             url = ProjectLibrary.shared.uniqueExportURL(name: model.doc.name, ext: ext)
@@ -125,8 +122,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             PaletteCommand(id: "save", group: "Project", title: "Save", icon: "square.and.arrow.down.on.square", shortcut: "⌘S") { m.saveNow() },
             PaletteCommand(id: "undo", group: "Project", title: "Undo", icon: "arrow.uturn.backward", shortcut: "⌘Z", enabled: m.canUndo) { m.undo() },
             PaletteCommand(id: "redo", group: "Project", title: "Redo", icon: "arrow.uturn.forward", shortcut: "⇧⌘Z", enabled: m.canRedo) { m.redo() },
-            PaletteCommand(id: "quality", group: "View", title: m.previewFull ? "Preview quality: half (faster)" : "Preview quality: full",
-                           icon: "circle.hexagongrid") { m.previewFull.toggle() },
+            PaletteCommand(id: "quality", group: "View", title: "Preview quality: \(m.previewQuality.next.label.lowercased())",
+                           icon: "circle.hexagongrid") { m.previewQuality = m.previewQuality.next },
             PaletteCommand(id: "theme", group: "View", title: "Switch light / dark mode", icon: "circle.lefthalf.filled") { AppSettings.shared.toggleAppearance() },
             PaletteCommand(id: "settings", group: "Application", title: "Settings…", icon: "gearshape", shortcut: "⌘,") { WindowManager.shared.showSettings() },
         ]
@@ -207,6 +204,8 @@ struct EditorView: View {
             Rectangle().fill(Theme.border).frame(height: 1)
             HStack(spacing: 0) {
                 PreviewArea(model: model)
+                    .overlay(alignment: .bottom) { quickToast }
+                    .animation(.easeOut(duration: 0.2), value: ui.quickStatus)
                 InspectorRail(model: model, ui: ui)
                 InspectorView(model: model, ui: ui)
                     .frame(width: 330)
@@ -216,7 +215,6 @@ struct EditorView: View {
             }
             Rectangle().fill(Theme.border).frame(height: 1)
             TimelineView(model: model)
-                .frame(height: 262)
                 .background(Theme.bg)
         }
         .background(Theme.bg)
@@ -231,23 +229,6 @@ struct EditorView: View {
             CommandPaletteView(commands: WindowManager.shared.editorController(for: model)?.paletteCommands() ?? [],
                                isPresented: $ui.showPalette)
         }
-        .overlay(alignment: .top) {
-            if let status = ui.quickStatus {
-                HStack(spacing: 10) {
-                    if let p = ui.quickProgress {
-                        ProgressView(value: p).tint(Theme.accent).frame(width: 120)
-                    } else {
-                        Image(systemName: status.hasPrefix("Export failed") ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(status.hasPrefix("Export failed") ? .orange : .green)
-                    }
-                    Text(status).font(.system(size: 12, weight: .medium))
-                }
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(Capsule().fill(Theme.raised).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
-                .padding(.top, 62)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
         .overlay {
             if let err = model.loadError {
                 VStack(spacing: 10) {
@@ -258,6 +239,28 @@ struct EditorView: View {
                 .padding(30)
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.panel))
             }
+        }
+    }
+
+    /// Quick-export progress, over the bottom of the preview (clear of the header).
+    @ViewBuilder
+    private var quickToast: some View {
+        if let status = ui.quickStatus {
+            HStack(spacing: 10) {
+                if let p = ui.quickProgress {
+                    ProgressView(value: p).tint(Theme.accent).frame(width: 120)
+                    Text("\(Int(p * 100))%").font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.textDim)
+                } else {
+                    Image(systemName: status.hasPrefix("Export failed") ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(status.hasPrefix("Export failed") ? .orange : .green)
+                }
+                Text(status).font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Capsule().fill(Theme.raised).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+            .padding(.bottom, 72)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
         }
     }
 }
@@ -274,7 +277,6 @@ private struct EditorToolbar: View {
     @State private var showSavePreset = false
     @State private var presetName = ""
     @State private var showShortcuts = false
-    @State private var confirmTrash = false
     @State private var showNotes = false
 
     private func commitName() {
@@ -292,7 +294,11 @@ private struct EditorToolbar: View {
                 IconButton(icon: "folder", help: "Show project in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([model.folder])
                 }
-                IconButton(icon: "trash", help: "Move project to Trash") { confirmTrash = true }
+                IconButton(icon: "trash", help: "Move project to Trash") {
+                    if TrashConfirmation.run(name: model.doc.name), model.moveToTrash() {
+                        WindowManager.shared.closeEditor(folder: model.folder)
+                    }
+                }
                 IconButton(icon: model.doc.notes.isEmpty ? "note.text" : "note.text.badge.plus",
                            help: model.doc.notes.isEmpty ? "Add a note about this recording" : model.doc.notes,
                            tint: model.doc.notes.isEmpty ? Theme.text : Theme.accent) { showNotes.toggle() }
@@ -366,12 +372,6 @@ private struct EditorToolbar: View {
         .padding(.horizontal, 14)
         .frame(height: 52)
         .background(Theme.bg)
-        .confirmationDialog("Move “\(model.doc.name)” to the Trash?", isPresented: $confirmTrash) {
-            Button("Move to Trash", role: .destructive) {
-                if model.moveToTrash() { WindowManager.shared.closeEditor(folder: model.folder) }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .sheet(isPresented: $showSavePreset) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Save style preset").font(.headline)
@@ -451,10 +451,8 @@ private struct PreviewArea: View {
             HStack(spacing: 14) {
                 Menu {
                     ForEach(AspectRatio.allCases) { a in
-                        Button {
+                        MenuCheck(a.label, model.doc.style.aspect == a) {
                             model.edit(.render) { $0.style.aspect = a }
-                        } label: {
-                            if model.doc.style.aspect == a { Label(a.label, systemImage: "checkmark") } else { Text(a.label) }
                         }
                     }
                 } label: {
@@ -473,10 +471,11 @@ private struct PreviewArea: View {
                 .help("Crop the recording")
                 Spacer()
                 Menu {
-                    Button { model.previewFull = true } label: { if model.previewFull { Label("Full", systemImage: "checkmark") } else { Text("Full") } }
-                    Button { model.previewFull = false } label: { if !model.previewFull { Label("Half (faster)", systemImage: "checkmark") } else { Text("Half (faster)") } }
+                    ForEach(PreviewQuality.allCases) { q in
+                        MenuCheck(q.label, model.previewQuality == q) { model.previewQuality = q }
+                    }
                 } label: {
-                    Label("Preview quality: \(model.previewFull ? "Full" : "Half")", systemImage: "circle.hexagongrid")
+                    Label("Preview quality: \(model.previewQuality.short)", systemImage: "circle.hexagongrid")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -527,11 +526,8 @@ private struct TransportBar: View {
         model.player.pause()
         Task {
             guard let image = await model.currentFrameImage() else { NSSound.beep(); return }
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = "\(model.doc.name.replacingOccurrences(of: "/", with: "-")) frame.png"
-            panel.allowedContentTypes = [.png]
-            panel.directoryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
-            guard panel.runModal() == .OK, let url = panel.url,
+            let panel = SavePanels.make(name: "\(model.doc.name) frame", ext: "png", types: [.png])
+            guard let url = SavePanels.run(panel),
                   let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
             try? data.write(to: url)
         }
@@ -548,9 +544,7 @@ private struct TransportBar: View {
                     .disabled(!model.isReady)
                 Menu {
                     ForEach([0.5, 1, 1.5, 2, 4] as [Float], id: \.self) { r in
-                        Button { model.setPlaybackRate(r) } label: {
-                            if abs(model.playbackRate - r) < 0.01 { Label("\(r, specifier: "%g")×", systemImage: "checkmark") } else { Text("\(r, specifier: "%g")×") }
-                        }
+                        MenuCheck(String(format: "%g×", r), abs(model.playbackRate - r) < 0.01) { model.setPlaybackRate(r) }
                     }
                 } label: {
                     Text("\(model.playbackRate, specifier: "%g")×").font(.system(size: 12, weight: .semibold).monospacedDigit())

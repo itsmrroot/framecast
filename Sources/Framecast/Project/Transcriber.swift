@@ -23,6 +23,24 @@ enum Transcriber {
             .sorted { name(for: $0) < name(for: $1) }
     }
 
+    /// The system language if it's supported (identifiers differ: "en_US" vs "en-US"), then another
+    /// variant of the same language in the same region, then US English.
+    static func defaultLocale() -> Locale {
+        let supported = supportedLocales
+        func norm(_ id: String) -> String { id.replacingOccurrences(of: "_", with: "-").lowercased() }
+        let current = Locale.current
+        if let exact = supported.first(where: { norm($0.identifier) == norm(current.identifier) }) { return exact }
+        let lang = current.language.languageCode?.identifier
+        let region = current.region?.identifier
+        if let sameRegion = supported.first(where: { $0.language.languageCode?.identifier == lang && $0.region?.identifier == region }) {
+            return sameRegion
+        }
+        if lang == "en", let us = supported.first(where: { norm($0.identifier) == "en-us" }) { return us }
+        return supported.first { $0.language.languageCode?.identifier == lang }
+            ?? supported.first { norm($0.identifier) == "en-us" }
+            ?? Locale(identifier: "en-US")
+    }
+
     static func name(for locale: Locale) -> String {
         Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
     }
@@ -36,7 +54,8 @@ enum Transcriber {
 
     /// Transcribes the project's audio (microphone if recorded, otherwise system audio) in chunks.
     static func transcribe(folder: URL, info: RecordingInfo, locale: Locale,
-                           progress: @escaping @Sendable (Double) -> Void) async throws -> [CaptionCue] {
+                           progress: @escaping @Sendable (Double, String) -> Void) async throws -> [CaptionCue] {
+        progress(0, "Preparing audio…")
         guard await requestAuthorization() else { throw Failure.notAuthorized }
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
             throw Failure.unavailable(name(for: locale))
@@ -64,12 +83,17 @@ enum Transcriber {
         var words: [(t: Double, d: Double, s: String)] = []
         var start = 0.0
         var index = 0
+        let parts = max(1, Int(ceil((duration - overlap) / (chunk - overlap))))
+        var silentParts = 0
+        var recognizerMessage: String?
         while start < duration - 0.3 {
             try Task.checkCancellation()
             let end = min(duration, start + chunk)
+            progress(min(0.99, start / duration), parts > 1 ? "Transcribing part \(index + 1) of \(parts)…" : "Transcribing…")
             let url = tmp.appendingPathComponent("chunk\(index).m4a")
             try await exportAudio(asset: asset, from: start, to: end, to: url)
-            let segments = try await recognize(url: url, recognizer: recognizer)
+            let (segments, noSpeech) = try await recognize(url: url, recognizer: recognizer)
+            if let noSpeech { silentParts += 1; recognizerMessage = noSpeech }
             // Neighbouring chunks overlap by `overlap` seconds; split the overlap in the middle so a word at
             // the edge of one chunk (often cut off) comes from the next chunk, where it's whole.
             let keepFrom = index == 0 ? 0 : overlap / 2
@@ -77,12 +101,19 @@ enum Transcriber {
             for seg in segments where seg.timestamp >= keepFrom && seg.timestamp < keepUntil {
                 words.append((start + seg.timestamp, seg.duration, seg.substring))
             }
-            progress(min(0.99, end / duration))
             index += 1
             start = end - overlap
             if end >= duration { break }
         }
-        progress(1)
+        progress(1, "Done")
+        if words.isEmpty {
+            // Say what the recognizer reported, so silence can be told apart from a recognizer problem.
+            let source = sourceURL == micURL ? "microphone" : "system audio"
+            var message = "No speech was recognised in the \(source) track (\(name(for: locale)), \(index) part\(index == 1 ? "" : "s") checked)."
+            if let recognizerMessage, silentParts > 0 { message += " The recognizer said: “\(recognizerMessage)”." }
+            message += " If there is speech, try another language, or check that Dictation is turned on in System Settings → Keyboard."
+            throw Failure.failed(message)
+        }
         return group(words)
     }
 
@@ -94,7 +125,8 @@ enum Transcriber {
         try await session.export(to: url, as: .m4a)
     }
 
-    private static func recognize(url: URL, recognizer: SFSpeechRecognizer) async throws -> [SFTranscriptionSegment] {
+    /// The recognised words, plus the recognizer's message when it found no speech in this part.
+    private static func recognize(url: URL, recognizer: SFSpeechRecognizer) async throws -> ([SFTranscriptionSegment], String?) {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.shouldReportPartialResults = false
         request.addsPunctuation = true
@@ -105,15 +137,15 @@ enum Transcriber {
                 guard !finished else { return }
                 if let result, result.isFinal {
                     finished = true
-                    cont.resume(returning: result.bestTranscription.segments)
+                    cont.resume(returning: (result.bestTranscription.segments, nil))
                 } else if let error {
                     finished = true
                     // "No speech detected" is not a failure: the chunk is just silent.
                     let ns = error as NSError
                     if ns.domain == "kAFAssistantErrorDomain" && (ns.code == 1110 || ns.code == 203) {
-                        cont.resume(returning: [])
+                        cont.resume(returning: ([], error.localizedDescription))
                     } else {
-                        cont.resume(throwing: Failure.failed(error.localizedDescription))
+                        cont.resume(throwing: Failure.failed("Speech recognition failed: \(error.localizedDescription) (\(ns.domain) \(ns.code))"))
                     }
                 }
             }

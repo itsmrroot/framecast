@@ -151,7 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.setActivationPolicy(.regular)
         AppSettings.shared.applyAppearance()
-        DeviceCapture.enableDiscovery()
         HotKeyCenter.shared.registerAll()
         let opensProject = CommandLine.arguments.contains("--open")
         if AppSettings.shared.launchView == .home || opensProject {
@@ -190,7 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Clicking the Dock icon: the toolbar first (if that's the launch choice), the home window when the toolbar is already up.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated {
-            if WindowManager.shared.hasOpenWindows { return }
+            if WindowManager.shared.hasOpenWindows || WindowManager.shared.hasMinimizedWindows {
+                WindowManager.shared.bringWindowsForward()
+                return
+            }
             if AppSettings.shared.launchView == .toolbar && !RecordingToolbar.shared.isVisible
                 && RecordingCoordinator.shared.phase == .idle {
                 RecordingToolbar.shared.show()
@@ -283,6 +285,25 @@ final class WindowManager: NSObject, NSWindowDelegate {
     var anyEditorController: EditorWindowController? { editors.values.first }
 
     /// Whether the home window, Settings or an editor is on screen.
+    var hasMinimizedWindows: Bool {
+        appWindows.contains { $0.isMiniaturized }
+    }
+
+    private var appWindows: [NSWindow] {
+        [homeWindow, settingsWindow].compactMap { $0 } + editors.values.compactMap { $0.window }
+    }
+
+    /// Dock click with windows open: bring them forward (from other Spaces or the Dock), as macOS apps do.
+    func bringWindowsForward() {
+        NSApp.setActivationPolicy(.regular)
+        let windows = appWindows.filter { $0.isVisible || $0.isMiniaturized }
+        for w in windows where w.isMiniaturized { w.deminiaturize(nil) }
+        let front = windows.first { $0.isKeyWindow } ?? windows.last
+        for w in windows where w !== front { w.orderFront(nil) }
+        front?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     var hasOpenWindows: Bool {
         [homeWindow, settingsWindow].contains { $0?.isVisible == true } || editors.values.contains { $0.window?.isVisible == true }
     }
@@ -325,7 +346,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     func showSettings() {
         if settingsWindow == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: SettingsWindowView.height),
                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             w.title = "Settings"
             w.titlebarAppearsTransparent = true
@@ -363,6 +384,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
         for w in visible where !hiddenForRecording.contains(where: { $0 === w }) { hiddenForRecording.append(w) }
         editors.values.forEach { $0.model.player.pause() }
         for w in visible { w.orderOut(nil) }
+    }
+
+    /// Brings back every window hidden for a recording that was cancelled, including the home window.
+    func restoreHiddenWindows() {
+        for w in hiddenForRecording { w.orderFront(nil) }
+        hiddenForRecording = []
     }
 
     private func restoreHidden() {

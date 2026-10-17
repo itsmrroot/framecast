@@ -95,6 +95,11 @@ enum SelfTest {
         check(abs(covered - 10) < 0.0001, "speed-up keeps all footage (\(clips.count) pieces)")
         check(clips.first?.start == 0 && clips.last?.end == 10, "no slivers at the edges")
         check(zip(clips, clips.dropFirst()).allSatisfy { abs($0.end - $1.start) < 0.0001 }, "pieces are contiguous")
+        let merged = ClipOps.apply([(1, 3), (3.3, 6), (9.7, 9.9)], to: [Clip(start: 0, end: 10)], speed: 4)
+        check(merged.allSatisfy { $0.duration >= 0.5 }, "no pieces shorter than 0.5 s (\(merged.map { String(format: "%.1f", $0.duration) }))")
+        let map = EditMap(clips: [Clip(start: 0, end: 2), Clip(start: 5, end: 7, speed: 2)])
+        check(abs(map.duration - 3) < 0.0001 && abs(map.compTime(source: 6) - 2.5) < 0.0001 && abs(map.compTime(source: 3) - 2) < 0.0001,
+              "edited time closes cuts and applies speed")
 
         // Export cancel must return promptly (it used to hang waiting on the audio input).
         if let video, FileManager.default.fileExists(atPath: video.path) {

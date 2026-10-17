@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.5.0
+
+Fixes from a full hands-on test of 1.4.0, plus a few things that make recording easier.
+
+**Recording**
+- Every click is recorded, even a quick trackpad tap, so click effects and automatic zooms never miss one
+- The ▾ menu next to Start can no longer start a recording by accident, and the button shows what happens next ("then: Export & copy")
+- Menus show a ✓ next to the current camera, microphone, system audio, after-recording action, aspect ratio, preview quality and speed
+- Area recording: typed sizes apply when you leave the field (not only on Return), keep the aspect lock, and record at exactly the size shown. Saved sizes can be removed, and there's a note field
+- Window recording works like Display and Area: pick a window, name it, then press Start. Search windows, and pick windows on other Spaces
+- Restart and Discard ask for a second click after the first 10 seconds, so one misclick can't throw away a long take
+- Cancelling the countdown takes you back to the toolbar you started from
+- Device mode looks for iPhones and iPads only when you choose it, and says what to do if none is connected
+- Selected-apps audio: Cancel really cancels, and you can add apps that aren't running yet
+
+**Editing**
+- The timeline shows edited time: removed parts close up, sped-up clips get shorter, and the ruler matches the time under the preview
+- The paused preview updates right away when you add or move an effect
+- Smart Speed no longer leaves tiny clips that are hard to select
+- The timeline grows to show every effect lane
+- Preview quality: Quarter, for long 4K projects
+- Each inspector panel and Settings tab opens at the top
+- Effect labels are readable in light mode
+
+**Captions**
+- The language defaults to your Mac's language
+- Progress shows each part as it's transcribed, and when nothing is recognised you see what the recognizer reported
+
+**Export**
+- File names use "14.13" instead of "14:13", which Finder showed as "14/13"
+- Save panels open in the folder you last used (your Exports folder at first)
+- "Export complete" closes by itself after a few seconds unless you point at it
+- After "Export and save to file", cancelling the save panel respects "Open quick export widget"
+- The export sheet shows a size estimate for GIFs, and Esc no longer closes it from inside a menu
+- The editor's quick-export message sits at the bottom of the preview and shows the percentage
+
+**Everywhere**
+- Settings → Reset: Return now cancels; resetting takes a click
+- VoiceOver reads proper names for the recording controls, countdown, ▾ menu, timeline items and more
+- Clicking the Dock icon brings Framecast's open windows forward
+- The update window opens centred on the window you opened it from
+- Settings is taller, so nothing is cut off
+- Shortcuts show the keys of your keyboard layout, and keys that can't be named are refused
+- The speaker notes shortcut is shown in the ⚙ menu
+- "Move to Trash" confirmations are easier to read
+
 ## 1.4.0
 
 - Name a recording and add a note about why you made it, before you record (home screen, display picker or area selector). Notes show on library cards and in the editor

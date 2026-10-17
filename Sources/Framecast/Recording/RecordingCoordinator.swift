@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import ScreenCaptureKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 enum RecordingError: LocalizedError {
     case noScreenPermission
@@ -55,8 +56,12 @@ final class RecordingCoordinator: ObservableObject {
         }
     }
 
-    func start() {
+    /// Started from the recording toolbar, so cancelling goes back there instead of to the home window.
+    private var fromToolbar = false
+
+    func start(fromToolbar: Bool = false) {
         guard phase == .idle else { return }
+        self.fromToolbar = fromToolbar
         phase = .preparing // claimed now, so a second press can't start another recording
         Task { await startRecording() }
     }
@@ -113,7 +118,7 @@ final class RecordingCoordinator: ObservableObject {
             return
         }
 
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: settings.kind != .window)
         let pid = ProcessInfo.processInfo.processIdentifier
         var excluded = content.windows.filter { $0.owningApplication?.processID == pid }
         if settings.hideDesktopIcons {
@@ -261,6 +266,7 @@ final class RecordingCoordinator: ObservableObject {
 
     /// iPhone / iPad screen recording.
     private func prepareDevice() async throws {
+        DeviceCapture.enableDiscovery()
         guard let dev = DeviceCatalog.iosDevice(id: settings.deviceID) else {
             throw RecordingError.sourceUnavailable("Connect your iPhone or iPad with a cable, unlock it and trust this Mac, then try again.")
         }
@@ -401,14 +407,17 @@ final class RecordingCoordinator: ObservableObject {
             QuickExportWidget.shared.show(folder: folder)
             QuickExportWidget.shared.export()
         case .saveToFile:
-            let ext = AppSettings.shared.exportSettings.format.fileExtension
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = "\(doc.name.replacingOccurrences(of: "/", with: "-")).\(ext)"
-            panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            let format = AppSettings.shared.exportSettings.format
+            let panel = SavePanels.make(name: doc.name, ext: format.fileExtension, types: [format == .mp4 ? .mpeg4Movie : .gif])
             NSApp.activate(ignoringOtherApps: true)
-            QuickExportWidget.shared.show(folder: folder)
-            if panel.runModal() == .OK, let url = panel.url {
+            if let url = SavePanels.run(panel) {
+                QuickExportWidget.shared.show(folder: folder)
                 QuickExportWidget.shared.export(to: url)
+            } else if AppSettings.shared.showQuickExportWidget {
+                // Cancelled: same as "Create project".
+                QuickExportWidget.shared.show(folder: folder)
+            } else {
+                WindowManager.shared.openEditor(folder: folder)
             }
         }
     }
@@ -430,7 +439,12 @@ final class RecordingCoordinator: ObservableObject {
             await teardown(deleteFolder: true)
             phase = .idle
             elapsed = 0
-            WindowManager.shared.showHome()
+            if fromToolbar {
+                WindowManager.shared.restoreHiddenWindows()
+                RecordingToolbar.shared.show()
+            } else {
+                WindowManager.shared.showHome()
+            }
         }
     }
 

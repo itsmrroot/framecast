@@ -375,7 +375,20 @@ final class Updater: ObservableObject {
             MainActor.assumeIsolated { self?.window = nil }
         }
         window = w
+        let anchor = NSApp.keyWindow ?? NSApp.mainWindow
+        // Centre on the window it was opened from, once SwiftUI has sized it.
+        func place() {
+            if let a = anchor, a !== w, a.isVisible {
+                let f = w.frame
+                w.setFrameOrigin(NSPoint(x: a.frame.midX - f.width / 2, y: a.frame.midY - f.height / 2))
+            } else {
+                w.center()
+            }
+        }
+        w.layoutIfNeeded()
+        place()
         w.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { place() }
         NSApp.activate(ignoringOtherApps: true)
     }
 

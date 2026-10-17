@@ -103,7 +103,7 @@ final class ProjectLibrary: ObservableObject {
     func uniqueExportURL(name: String, ext: String) -> URL {
         let dir = exportsFolder
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let base = name.replacingOccurrences(of: "/", with: "-")
+        let base = SavePanels.safeName(name)
         var url = dir.appendingPathComponent("\(base).\(ext)")
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) {
@@ -296,5 +296,41 @@ enum Thumbnailer {
         if let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
             try? data.write(to: url, options: .atomic)
         }
+    }
+}
+
+/// Save panels for exports: Finder-safe names, starting in the last folder used (the Exports folder at first).
+@MainActor
+enum SavePanels {
+    private static let key = "export.lastDirectory"
+
+    /// "Recording 17.10.2026 at 14:13" → "Recording 17.10.2026 at 14.13" (Finder shows ":" as "/").
+    nonisolated static func safeName(_ name: String) -> String {
+        name.replacingOccurrences(of: ":", with: ".").replacingOccurrences(of: "/", with: "-")
+    }
+
+    static var directory: URL {
+        if let path = UserDefaults.standard.string(forKey: key), FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        let dir = ProjectLibrary.shared.exportsFolder
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func make(name: String, ext: String, types: [UTType]) -> NSSavePanel {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(safeName(name)).\(ext)"
+        panel.allowedContentTypes = types
+        panel.directoryURL = directory
+        panel.canCreateDirectories = true
+        return panel
+    }
+
+    /// Runs the panel and remembers its folder. Returns nil if cancelled.
+    static func run(_ panel: NSSavePanel) -> URL? {
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: key)
+        return url
     }
 }
