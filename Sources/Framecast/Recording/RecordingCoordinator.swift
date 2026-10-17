@@ -182,7 +182,13 @@ final class RecordingCoordinator: ObservableObject {
         config.queueDepth = 8
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.colorSpaceName = CGColorSpace.sRGB
-        config.capturesAudio = settings.systemAudio
+        // "Selected apps": a separate audio-only stream limited to those apps provides the system audio.
+        var audioFilter: SCContentFilter?
+        if settings.systemAudio, settings.audioFromSelectedApps, let audioDisplay = display ?? content.displays.first {
+            let apps = content.applications.filter { settings.audioApps.contains($0.bundleIdentifier) }
+            if !apps.isEmpty { audioFilter = SCContentFilter(display: audioDisplay, including: apps, exceptingWindows: []) }
+        }
+        config.capturesAudio = settings.systemAudio && audioFilter == nil
         config.excludesCurrentProcessAudio = true
         config.sampleRate = 48000
         config.channelCount = 2
@@ -199,7 +205,7 @@ final class RecordingCoordinator: ObservableObject {
         screen.onError = { [weak self] error in
             Task { @MainActor in self?.handleStreamError(error) }
         }
-        try await screen.start(filter: filter, configuration: config)
+        try await screen.start(filter: filter, configuration: config, audioFilter: audioFilter)
         self.screen = screen
 
         let camID = settings.cameraEnabled && !settings.cameraID.isEmpty ? settings.cameraID : nil
@@ -366,10 +372,15 @@ final class RecordingCoordinator: ObservableObject {
             : []
         var style2 = style
         if !info.hasCursorData { style2.showCursor = false }
-        var doc = ProjectDocument(name: info.hasCursorData ? ProjectLibrary.defaultName() : "\(info.sourceName) \(ProjectLibrary.defaultName())",
+        let typedName = settings.nextName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultName = info.hasCursorData ? ProjectLibrary.defaultName() : "\(info.sourceName) \(ProjectLibrary.defaultName())"
+        var doc = ProjectDocument(name: typedName.isEmpty ? defaultName : typedName,
                                   createdAt: Date(), info: info,
                                   clips: [Clip(start: 0, end: info.duration)], zooms: zooms, style: style2)
         doc.flags = flags.filter { $0 < info.duration }
+        doc.notes = settings.nextNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.nextName = ""
+        settings.nextNote = ""
         ProjectIO.save(doc, folder: folder)
         await Thumbnailer.writeRawThumbnail(videoURL: folder.appendingPathComponent(ProjectFiles.screen),
                                             to: folder.appendingPathComponent(ProjectFiles.thumbnail))
@@ -379,10 +390,26 @@ final class RecordingCoordinator: ObservableObject {
         elapsed = 0
         ProjectLibrary.shared.reload()
         NSSound(named: "Glass")?.play()
-        if AppSettings.shared.showQuickExportWidget {
+        switch AppSettings.shared.afterRecording {
+        case .createProject:
+            if AppSettings.shared.showQuickExportWidget {
+                QuickExportWidget.shared.show(folder: folder)
+            } else {
+                WindowManager.shared.openEditor(folder: folder)
+            }
+        case .copyToClipboard:
             QuickExportWidget.shared.show(folder: folder)
-        } else {
-            WindowManager.shared.openEditor(folder: folder)
+            QuickExportWidget.shared.export()
+        case .saveToFile:
+            let ext = AppSettings.shared.exportSettings.format.fileExtension
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "\(doc.name.replacingOccurrences(of: "/", with: "-")).\(ext)"
+            panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            NSApp.activate(ignoringOtherApps: true)
+            QuickExportWidget.shared.show(folder: folder)
+            if panel.runModal() == .OK, let url = panel.url {
+                QuickExportWidget.shared.export(to: url)
+            }
         }
     }
 

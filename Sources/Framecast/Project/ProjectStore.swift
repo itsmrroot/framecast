@@ -69,6 +69,7 @@ struct ProjectSummary: Identifiable, Equatable {
     var id: URL { folder }
     let folder: URL
     let name: String
+    var notes: String = ""
     let createdAt: Date
     let duration: Double
     let thumbnail: NSImage?
@@ -159,7 +160,7 @@ final class ProjectLibrary: ObservableObject {
             let docURL = folder.appendingPathComponent(ProjectFiles.document)
             let modified = (try? docURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? doc.createdAt
             let duration = EditMap(clips: doc.clips).duration
-            result.append(ProjectSummary(folder: folder, name: doc.name, createdAt: doc.createdAt,
+            result.append(ProjectSummary(folder: folder, name: doc.name, notes: doc.notes, createdAt: doc.createdAt,
                                          duration: duration, thumbnail: NSImage(contentsOf: thumbURL), modified: modified))
         }
         projects = result.sorted { $0.createdAt > $1.createdAt }

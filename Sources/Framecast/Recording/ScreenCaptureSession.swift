@@ -8,6 +8,8 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
     private let clock: RecordingClock
     private let queue = DispatchQueue(label: "framecast.screen-capture", qos: .userInteractive)
     private var stream: SCStream?
+    /// Audio-only stream limited to chosen apps (system audio from selected apps).
+    private var audioStream: SCStream?
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
     private let audioInput: AVAssetWriterInput?
@@ -68,15 +70,33 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
     }
 
     /// Starts the stream ("warm"), frames are buffered but not written until `beginRecording`.
-    func start(filter: SCContentFilter, configuration: SCStreamConfiguration) async throws {
+    /// - Parameter audioFilter: when set, system audio comes from a separate audio-only stream with this filter
+    ///   (e.g. only some apps) instead of from the screen stream.
+    func start(filter: SCContentFilter, configuration: SCStreamConfiguration, audioFilter: SCContentFilter? = nil) async throws {
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if audioInput != nil {
+        if audioInput != nil && audioFilter == nil {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
         }
         guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         try await stream.startCapture()
         self.stream = stream
+
+        if let audioFilter, audioInput != nil {
+            let cfg = SCStreamConfiguration()
+            cfg.capturesAudio = true
+            cfg.excludesCurrentProcessAudio = true
+            cfg.sampleRate = 48000
+            cfg.channelCount = 2
+            // Video is required by the API but unused: keep it tiny and slow.
+            cfg.width = 2
+            cfg.height = 2
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            let audio = SCStream(filter: audioFilter, configuration: cfg, delegate: self)
+            try audio.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            try await audio.startCapture()
+            audioStream = audio
+        }
     }
 
     /// Call right after resuming. ScreenCaptureKit only sends frames when the screen changes, so write the
@@ -105,6 +125,7 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
         if let stream {
             try? await stream.stopCapture()
         }
+        if let audioStream { try? await audioStream.stopCapture() }
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
                 guard sessionStarted, writer.status == .writing else {
@@ -128,6 +149,7 @@ final class ScreenCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @u
 
     func cancel() async {
         if let stream { try? await stream.stopCapture() }
+        if let audioStream { try? await audioStream.stopCapture() }
         queue.sync { writer.cancelWriting() }
     }
 

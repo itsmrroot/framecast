@@ -133,7 +133,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
 }
 
 enum TextPlacement: String, Codable, CaseIterable, Identifiable {
-    case top, center, bottom
+    case top, center, bottom, custom
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
 }
@@ -155,6 +155,9 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     var text = "Add your title"
     var placement: TextPlacement = .center
     var textSize: Double = 1
+    /// Centre of the title on the canvas (normalised, top-left) when placement is custom.
+    var textX: Double = 0.5
+    var textY: Double = 0.5
     /// Kept on the timeline but not rendered.
     var disabled = false
     var duration: Double { end - start }
@@ -184,6 +187,8 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         placement = try c.decodeIfPresent(TextPlacement.self, forKey: .placement) ?? d.placement
         textSize = try c.decodeIfPresent(Double.self, forKey: .textSize) ?? d.textSize
         disabled = try c.decodeIfPresent(Bool.self, forKey: .disabled) ?? false
+        textX = try c.decodeIfPresent(Double.self, forKey: .textX) ?? 0.5
+        textY = try c.decodeIfPresent(Double.self, forKey: .textY) ?? 0.5
     }
 }
 
@@ -471,6 +476,8 @@ struct ProjectDocument: Codable {
     var captions: [CaptionCue] = []
     /// Moments marked while recording (source time).
     var flags: [Double] = []
+    /// What this recording is for (typed before or after recording).
+    var notes: String = ""
 
     init(name: String, createdAt: Date, info: RecordingInfo, clips: [Clip], zooms: [ZoomSegment], style: Style,
          effects: [EffectSegment] = [], captions: [CaptionCue] = []) {
@@ -498,6 +505,7 @@ struct ProjectDocument: Codable {
         effects = try c.decodeIfPresent([EffectSegment].self, forKey: .effects) ?? []
         captions = try c.decodeIfPresent([CaptionCue].self, forKey: .captions) ?? []
         flags = try c.decodeIfPresent([Double].self, forKey: .flags) ?? []
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 }
 

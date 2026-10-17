@@ -233,6 +233,7 @@ private final class AreaSelectionView: NSView {
 
 private struct AreaControls: View {
     @ObservedObject var model: AreaEditorModel
+    @ObservedObject private var rec = RecorderSettings.shared
     @State private var w = ""
     @State private var h = ""
 
@@ -261,16 +262,26 @@ private struct AreaControls: View {
             Rectangle().fill(Color.white.opacity(0.15)).frame(width: 1, height: 22)
             Button("Cancel") { model.finish?(nil) }
                 .buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
-            Button {
-                model.finish?(model.rect)
-            } label: {
-                Label(model.confirmTitle, systemImage: "record.circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.horizontal, 12).frame(height: 30)
-                    .background(Capsule().fill(Theme.accent))
+            if model.confirmTitle == "Start Recording" {
+                TextField("Name (optional)", text: $rec.nextName)
+                    .textFieldStyle(.plain)
+                    .frame(width: 130, height: 24)
+                    .padding(.horizontal, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.1)))
+                StartRecordingButton { model.finish?(model.rect) }
+                    .scaleEffect(0.85)
+            } else {
+                Button {
+                    model.finish?(model.rect)
+                } label: {
+                    Label(model.confirmTitle, systemImage: "checkmark.circle")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .background(Capsule().fill(Theme.accent))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
         }
         .font(.system(size: 12))
         .foregroundStyle(.white)
@@ -366,7 +377,9 @@ enum DisplayPicker {
                 w.backgroundColor = .clear
                 w.sharingType = .none
                 w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                let view = DisplayPickView(name: screen.localizedName,
+                let fps = screen.maximumFramesPerSecond
+                let detail = "\(Int(screen.frame.width))×\(Int(screen.frame.height))" + (fps > 0 ? " • \(fps) FPS" : "")
+                let view = DisplayPickView(name: screen.localizedName, detail: detail,
                                            onHover: { [weak w] in w?.makeKey() },
                                            onStart: { finish(screen) },
                                            onCancel: { finish(nil) })
@@ -383,6 +396,7 @@ enum DisplayPicker {
 
 private struct DisplayPickView: View {
     let name: String
+    let detail: String
     let onHover: () -> Void
     let onStart: () -> Void
     let onCancel: () -> Void
@@ -392,18 +406,15 @@ private struct DisplayPickView: View {
         ZStack {
             Rectangle().fill(hovered ? Theme.accent.opacity(0.2) : Color.black.opacity(0.001))
             if hovered {
-                VStack(spacing: 18) {
-                    Text(name).font(.system(size: 40, weight: .bold)).foregroundStyle(.white).shadow(radius: 8)
-                    Button(action: onStart) {
-                        Label("Start recording", systemImage: "record.circle")
-                            .font(.system(size: 15, weight: .semibold))
-                            .padding(.horizontal, 18).frame(height: 40)
-                            .background(Capsule().fill(Theme.accent))
-                            .foregroundStyle(.white)
+                VStack(spacing: 16) {
+                    VStack(spacing: 4) {
+                        Text(name).font(.system(size: 40, weight: .bold)).foregroundStyle(.white).shadow(radius: 8)
+                        Text(detail).font(.system(size: 15, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.85)).shadow(radius: 4)
                     }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.defaultAction)
-                    Text("Esc to cancel").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                    RecordingNameFields()
+                    StartRecordingButton(action: onStart)
+                    Text("Return to start · Esc to cancel").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
                 }
             }
             Button("", action: onCancel).keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
@@ -413,6 +424,80 @@ private struct DisplayPickView: View {
             hovered = inside
             if inside { onHover() }
         }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+// MARK: - Start controls
+
+/// "Start recording ▾": the ▾ chooses what happens after recording and whether zooms are created.
+struct StartRecordingButton: View {
+    let action: () -> Void
+    @ObservedObject private var app = AppSettings.shared
+    @ObservedObject private var rec = RecorderSettings.shared
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: action) {
+                Label("Start recording", systemImage: "record.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.leading, 18).padding(.trailing, 12)
+                    .frame(height: 42)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 22)
+            Menu {
+                Section("After recording") {
+                    ForEach(AfterRecording.allCases) { a in
+                        Button { app.afterRecording = a } label: {
+                            if app.afterRecording == a { Label(a.label, systemImage: "checkmark") } else { Text(a.label) }
+                        }
+                    }
+                }
+                Divider()
+                Toggle("Automatically create zooms", isOn: $rec.autoZoom)
+                Divider()
+                Button("Quick Export Settings…") { WindowManager.shared.showSettings(tab: .export) }
+            } label: {
+                Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
+                    .frame(width: 38, height: 42)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("What happens after recording")
+        }
+        .foregroundStyle(.white)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent))
+        .fixedSize()
+    }
+}
+
+/// Optional name and note for the next recording, so you remember what it was for.
+struct RecordingNameFields: View {
+    @ObservedObject private var rec = RecorderSettings.shared
+    var width: CGFloat = 320
+
+    var body: some View {
+        VStack(spacing: 6) {
+            TextField("Name this recording (optional)", text: $rec.nextName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 12).frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color.black.opacity(0.45)))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.white.opacity(0.18)))
+            TextField("Why are you recording? (optional note)", text: $rec.nextNote)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.35)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.12)))
+        }
+        .foregroundStyle(.white)
+        .frame(width: width)
         .environment(\.colorScheme, .dark)
     }
 }

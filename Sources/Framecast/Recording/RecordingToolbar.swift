@@ -125,6 +125,18 @@ final class RecordingToolbar: ObservableObject {
         pickerPanel = p
     }
 
+    func showAudioAppPicker() {
+        closePicker()
+        let binding = Binding<Bool>(get: { true }, set: { [weak self] shown in if !shown { self?.closePicker() } })
+        let host = NSHostingView(rootView: AudioAppPicker(isPresented: binding).environment(\.colorScheme, .dark))
+        let p = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 360, height: 440), keyable: true)
+        p.contentView = host
+        p.center()
+        p.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        pickerPanel = p
+    }
+
     private func closePicker() {
         pickerPanel?.orderOut(nil)
         pickerPanel = nil
@@ -225,14 +237,19 @@ struct RecordingToolbarView: View {
                     Divider()
                     Button("Mic Mode (Voice Isolation)…") { AVCaptureDevice.showSystemUserInterface(.microphoneModes) }
                 }
-                Button {
-                    settings.systemAudio.toggle()
-                } label: {
-                    pill(icon: settings.systemAudio ? "speaker.wave.2" : "speaker.slash",
-                         title: settings.systemAudio ? "System audio" : "No system audio", on: settings.systemAudio)
+                deviceMenu(icon: settings.systemAudio ? "speaker.wave.2" : "speaker.slash",
+                           title: !settings.systemAudio ? "No system audio"
+                               : (settings.audioFromSelectedApps ? "\(settings.audioApps.count) app\(settings.audioApps.count == 1 ? "" : "s")" : "System audio"),
+                           on: settings.systemAudio) {
+                    Button { settings.systemAudio = true; settings.audioFromSelectedApps = false } label: {
+                        check("Record system audio from all apps", settings.systemAudio && !settings.audioFromSelectedApps)
+                    }
+                    Button { toolbar.showAudioAppPicker() } label: {
+                        check("Record system audio from selected apps…", settings.systemAudio && settings.audioFromSelectedApps)
+                    }
+                    Divider()
+                    Button { settings.systemAudio = false } label: { check("Don't record system audio", !settings.systemAudio) }
                 }
-                .buttonStyle(.plain)
-                .hoverHighlight()
                 .help("Record the sound your Mac plays")
             }
             .padding(.horizontal, 10)
@@ -550,6 +567,64 @@ final class AreaHighlight {
             border.lineWidth = 2
             NSColor.white.withAlphaComponent(0.5).setStroke()
             border.stroke()
+        }
+    }
+}
+
+/// Pick which apps' sound is recorded.
+private struct AudioAppPicker: View {
+    @Binding var isPresented: Bool
+    @ObservedObject private var settings = RecorderSettings.shared
+    @State private var apps: [(id: String, name: String, icon: NSImage?)] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Record audio from").font(.system(size: 15, weight: .semibold))
+            Text("Only these apps' sound is recorded. Video still shows everything.")
+                .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.6))
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(apps, id: \.id) { app in
+                        let on = settings.audioApps.contains(app.id)
+                        Button {
+                            if on { settings.audioApps.removeAll { $0 == app.id } } else { settings.audioApps.append(app.id) }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(on ? Theme.accent : .white.opacity(0.4))
+                                if let icon = app.icon { Image(nsImage: icon).resizable().frame(width: 20, height: 20) }
+                                Text(app.name).font(.system(size: 13))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            HStack {
+                Button("Cancel") { isPresented = false }.buttonStyle(SecondaryButtonStyle())
+                Spacer()
+                Button("Use \(settings.audioApps.count) App\(settings.audioApps.count == 1 ? "" : "s")") {
+                    settings.systemAudio = true
+                    settings.audioFromSelectedApps = !settings.audioApps.isEmpty
+                    isPresented = false
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(settings.audioApps.isEmpty)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .frame(width: 360, height: 440)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(white: 0.1).opacity(0.97)))
+        .task {
+            // Regular apps that are running now, alphabetically.
+            apps = NSWorkspace.shared.runningApplications
+                .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+                .compactMap { a in a.bundleIdentifier.map { (id: $0, name: a.localizedName ?? $0, icon: a.icon) } }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
     }
 }

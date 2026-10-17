@@ -43,6 +43,12 @@ final class RecorderSettings: ObservableObject {
     @Published var autoZoom: Bool { didSet { d.set(autoZoom, forKey: "rec.autoZoom") } }
     @Published var recordKeystrokes: Bool { didSet { d.set(recordKeystrokes, forKey: "rec.keys") } }
     @Published var deviceID: String { didSet { d.set(deviceID, forKey: "rec.deviceID") } }
+    /// Name and note for the next recording (cleared once it's saved).
+    @Published var nextName = ""
+    @Published var nextNote = ""
+    /// System audio: everything, only some apps (bundle ids), or nothing (`systemAudio` off).
+    @Published var audioFromSelectedApps: Bool { didSet { d.set(audioFromSelectedApps, forKey: "rec.audioSelected") } }
+    @Published var audioApps: [String] { didSet { d.set(audioApps, forKey: "rec.audioApps") } }
 
     private init() {
         d.register(defaults: [
@@ -66,6 +72,8 @@ final class RecorderSettings: ObservableObject {
         autoZoom = d.bool(forKey: "rec.autoZoom")
         recordKeystrokes = d.bool(forKey: "rec.keys")
         deviceID = d.string(forKey: "rec.deviceID") ?? ""
+        audioFromSelectedApps = d.bool(forKey: "rec.audioSelected")
+        audioApps = d.stringArray(forKey: "rec.audioApps") ?? []
     }
 }
 

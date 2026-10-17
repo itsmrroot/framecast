@@ -275,6 +275,7 @@ private struct EditorToolbar: View {
     @State private var presetName = ""
     @State private var showShortcuts = false
     @State private var confirmTrash = false
+    @State private var showNotes = false
 
     private func commitName() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -292,6 +293,23 @@ private struct EditorToolbar: View {
                     NSWorkspace.shared.activateFileViewerSelecting([model.folder])
                 }
                 IconButton(icon: "trash", help: "Move project to Trash") { confirmTrash = true }
+                IconButton(icon: model.doc.notes.isEmpty ? "note.text" : "note.text.badge.plus",
+                           help: model.doc.notes.isEmpty ? "Add a note about this recording" : model.doc.notes,
+                           tint: model.doc.notes.isEmpty ? Theme.text : Theme.accent) { showNotes.toggle() }
+                    .popover(isPresented: $showNotes, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Note").font(.system(size: 13, weight: .semibold))
+                            Text("What is this recording for? Shown in your library.")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                            TextEditor(text: Binding(get: { model.doc.notes }, set: { model.setNotes($0) }))
+                                .font(.system(size: 13))
+                                .frame(width: 300, height: 110)
+                                .scrollContentBackground(.hidden)
+                                .padding(6)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.06)))
+                        }
+                        .padding(14)
+                    }
                 Spacer()
                 AppearanceButton()
                 IconButton(icon: "command", help: "Command palette (⌘K)") { ui.showPalette = true }
@@ -478,6 +496,18 @@ private struct PreviewArea: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
                         .onTapGesture { model.togglePlay() }
+                    // Edit the selected blur / spotlight area or title right on the video (while paused).
+                    if !model.isPlaying, let e = model.selectedEffect, !e.disabled {
+                        let size = CGSize(width: max(1, fit.width), height: max(1, fit.height))
+                        if e.kind.hasRegion {
+                            // Clipped: while zoomed in, part of the area can be outside the visible frame.
+                            RegionCanvasOverlay(model: model, effect: e, size: size).frame(width: size.width, height: size.height)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        } else if e.kind == .text {
+                            TitleCanvasOverlay(model: model, effect: e, size: size).frame(width: size.width, height: size.height)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
                     if !model.isReady && model.loadError == nil {
                         ProgressView().controlSize(.large)
                     }

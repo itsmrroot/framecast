@@ -26,14 +26,22 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which Settings tab to show (set before opening the window).
+@MainActor
+final class SettingsNavigation: ObservableObject {
+    static let shared = SettingsNavigation()
+    @Published var tab: SettingsTab = .general
+}
+
 struct SettingsWindowView: View {
-    @State private var tab: SettingsTab = .general
+    @ObservedObject private var nav = SettingsNavigation.shared
+    private var tab: SettingsTab { nav.tab }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 ForEach(SettingsTab.allCases) { t in
-                    Button { tab = t } label: {
+                    Button { nav.tab = t } label: {
                         VStack(spacing: 6) {
                             Image(systemName: t.icon).font(.system(size: 19))
                             Text(t.label).font(.system(size: 12, weight: .medium))

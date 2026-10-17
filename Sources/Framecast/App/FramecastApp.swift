@@ -173,6 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if v == "crop" { c.showCrop() }
                     if v == "palette" { c.showPalette() }
                     if v.hasPrefix("panel:"), let tab = InspectorTab(rawValue: String(v.dropFirst(6))) { c.showPanel(tab) }
+                    if v.hasPrefix("select:"), let kind = EffectKind(rawValue: String(v.dropFirst(7))),
+                       let e = c.model.doc.effects.first(where: { $0.kind == kind }) {
+                        c.model.selection = .effect(e.id)
+                        c.model.seek(source: e.start + min(0.3, e.duration / 2))
+                    }
                 }
             }
         }
@@ -194,6 +199,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return true
+    }
+
+    /// Right-click on the Dock icon.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        MainActor.assumeIsolated {
+            let menu = NSMenu()
+            func item(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
+                let i = ClosureMenuItem(title: title, action: action)
+                return i
+            }
+            let rec = RecordingCoordinator.shared
+            if rec.isRecording {
+                menu.addItem(item("Stop Recording") { rec.stop() })
+                menu.addItem(item(rec.phase == .paused ? "Resume" : "Pause") { rec.togglePause() })
+            } else {
+                menu.addItem(item("New Recording…") { RecordingToolbar.shared.show() })
+                menu.addItem(item("Record Display") { RecordingToolbar.shared.start(.display, immediate: true) })
+            }
+            menu.addItem(.separator())
+            let recent = Array(ProjectLibrary.shared.projects.prefix(5))
+            if let last = recent.first {
+                menu.addItem(item("Open Last Project") { WindowManager.shared.openEditor(folder: last.folder) })
+            }
+            if recent.count > 1 {
+                let sub = NSMenu()
+                for p in recent { sub.addItem(item(p.name) { WindowManager.shared.openEditor(folder: p.folder) }) }
+                let recentItem = NSMenuItem(title: "Recent Projects", action: nil, keyEquivalent: "")
+                recentItem.submenu = sub
+                menu.addItem(recentItem)
+            }
+            menu.addItem(item("Show Recordings") { WindowManager.shared.showHome() })
+            menu.addItem(.separator())
+            let dock = item("Show Framecast in Dock") { AppSettings.shared.hideDockIcon.toggle() }
+            dock.state = AppSettings.shared.hideDockIcon ? .off : .on
+            menu.addItem(dock)
+            menu.addItem(item("Settings…") { WindowManager.shared.showSettings() })
+            return menu
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -273,6 +316,11 @@ final class WindowManager: NSObject, NSWindowDelegate {
         NSApp.setActivationPolicy(.regular)
         homeWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showSettings(tab: SettingsTab) {
+        SettingsNavigation.shared.tab = tab
+        showSettings()
     }
 
     func showSettings() {
@@ -357,4 +405,19 @@ final class WindowManager: NSObject, NSWindowDelegate {
     func saveAll() {
         for e in editors.values { e.model.saveNow() }
     }
+}
+
+/// A menu item that runs a closure (for menus built in code, like the Dock menu).
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, action handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func run() { handler() }
 }

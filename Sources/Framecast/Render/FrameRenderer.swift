@@ -43,14 +43,8 @@ final class FrameRenderer: @unchecked Sendable {
         let t = model.editMap.sourceTime(comp: compTime)
 
         // Virtual camera
-        let cam = model.camera.state(at: t)
-        let s = CGFloat(max(1, cam.scale))
-        let focus = CGPoint(x: sr.minX + cam.focus.x * sr.width, y: sr.maxY - cam.focus.y * sr.height)
-        let vw = size.width / s, vh = size.height / s
-        let cx = clampAxis(focus.x, view: vw, lo: sr.minX, hi: sr.maxX, total: size.width)
-        let cy = clampAxis(focus.y, view: vh, lo: sr.minY, hi: sr.maxY, total: size.height)
-        let ox = cx - vw / 2, oy = cy - vh / 2
-        let M = CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: -ox * s, ty: -oy * s)
+        let view = viewTransform(model: model, sourceTime: t, size: size)
+        let cam = view.cam, s = view.scale, ox = view.origin.x, oy = view.origin.y, M = view.transform
 
         var out = model.background(size: size, ciContext: ciContext).transformed(by: M)
 
@@ -246,14 +240,14 @@ final class FrameRenderer: @unchecked Sendable {
         let dy = -CGFloat(cam.focus.y - prev.focus.y) * sr.height * s
         // Kept subtle: it should soften movement, not smear text.
         let pan = min(hypot(dx, dy) * amount * 0.45, 14 * unit)
-        if pan > 0.8 {
+        if pan > 2 { // ignore the tiny settling drift after a zoom
             out = out.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
                 kCIInputRadiusKey: pan, kCIInputAngleKey: atan2(dy, dx),
             ]).cropped(to: canvas)
         }
         let zoomRate = abs(CGFloat(cam.scale - prev.scale)) / max(CGFloat(cam.scale), 1)
         let zoom = min(zoomRate * amount * 70 * unit, 10 * unit)
-        if zoom > 0.8 {
+        if zoom > 1.5 {
             let fx = (sr.minX + cam.focus.x * sr.width - ox) * s
             let fy = (sr.maxY - cam.focus.y * sr.height - oy) * s
             out = out.clampedToExtent().applyingFilter("CIZoomBlur", parameters: [
@@ -301,17 +295,61 @@ final class FrameRenderer: @unchecked Sendable {
         let w = img.extent.width, h = img.extent.height
         let margin = min(size.width, size.height) * 0.08
         var y: CGFloat
+        var x = (size.width - w) / 2
         switch e.placement {
         case .top: y = size.height - margin - h
         case .center: y = (size.height - h) / 2
         case .bottom: y = margin
+        case .custom:
+            // Dragged on the preview: textX/textY are the card's centre (top-left normalised), kept on the canvas.
+            x = min(max(0, CGFloat(e.textX) * size.width - w / 2), size.width - w)
+            y = min(max(0, (1 - CGFloat(e.textY)) * size.height - h / 2), size.height - h)
         }
         y -= CGFloat(1 - alpha) * 24 * unit
-        let card = img.transformed(by: CGAffineTransform(translationX: (size.width - w) / 2, y: y))
+        let card = img.transformed(by: CGAffineTransform(translationX: x, y: y))
         let shadow = roundedRect(card.extent.offsetBy(dx: 0, dy: -10 * unit), radius: 26 * unit * CGFloat(e.textSize),
                                  color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35))
             .applyingGaussianBlur(sigma: Double(22 * unit))
         return withAlpha(card.composited(over: shadow), CGFloat(alpha))
+    }
+
+    /// Where the camera is: screen rect, zoom scale and the canvas transform (Core Image coordinates).
+    struct ViewTransform {
+        let screenRect: CGRect
+        let cam: CameraPath.State
+        let scale: CGFloat
+        let origin: CGPoint
+        let transform: CGAffineTransform
+
+        /// A full-frame normalised (top-left) rect of the recording → a rect in top-left view coordinates.
+        func viewRect(fullFrame r: CGRect, crop: CropRect, canvasHeight h: CGFloat) -> CGRect {
+            let c = crop.toCrop(r)
+            let sr = screenRect
+            let ci = CGRect(x: sr.minX + c.minX * sr.width, y: sr.maxY - c.maxY * sr.height,
+                            width: c.width * sr.width, height: c.height * sr.height).applying(transform)
+            return CGRect(x: ci.minX, y: h - ci.maxY, width: ci.width, height: ci.height)
+        }
+
+        /// The inverse: a top-left view point → full-frame normalised point.
+        func fullFramePoint(view p: CGPoint, crop: CropRect, canvasHeight h: CGFloat) -> CGPoint {
+            let ci = CGPoint(x: p.x, y: h - p.y).applying(transform.inverted())
+            let sr = screenRect
+            let cx = (ci.x - sr.minX) / max(sr.width, 1), cy = (sr.maxY - ci.y) / max(sr.height, 1)
+            return CGPoint(x: crop.x + cx * crop.w, y: crop.y + cy * crop.h)
+        }
+    }
+
+    func viewTransform(model: RenderModel, sourceTime t: Double, size: CGSize) -> ViewTransform {
+        let sr = model.layout(for: size).screenRect
+        let cam = model.camera.state(at: t)
+        let s = CGFloat(max(1, cam.scale))
+        let focus = CGPoint(x: sr.minX + cam.focus.x * sr.width, y: sr.maxY - cam.focus.y * sr.height)
+        let vw = size.width / s, vh = size.height / s
+        let cx = clampAxis(focus.x, view: vw, lo: sr.minX, hi: sr.maxX, total: size.width)
+        let cy = clampAxis(focus.y, view: vh, lo: sr.minY, hi: sr.maxY, total: size.height)
+        let ox = cx - vw / 2, oy = cy - vh / 2
+        return ViewTransform(screenRect: sr, cam: cam, scale: s, origin: CGPoint(x: ox, y: oy),
+                             transform: CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: -ox * s, ty: -oy * s))
     }
 
     // MARK: Helpers

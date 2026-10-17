@@ -141,6 +141,21 @@ private struct RecordPanel: View {
             }
 
             VStack(spacing: 8) {
+                VStack(spacing: 6) {
+                    TextField("Name this recording (optional)", text: $settings.nextName)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .medium))
+                        .padding(.horizontal, 10).frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.06)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                    TextField("Why are you recording? (optional note)", text: $settings.nextNote)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 10).frame(height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill.opacity(0.04)))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+                }
+                .padding(.bottom, 4)
                 Button {
                     coordinator.start()
                 } label: {
@@ -486,6 +501,9 @@ private struct ProjectCard: View {
             .animation(.easeOut(duration: 0.15), value: hover)
 
             Text(project.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+            if !project.notes.isEmpty {
+                Text(project.notes).font(.system(size: 11.5)).foregroundStyle(Theme.textDim).lineLimit(2)
+            }
             Text(project.createdAt.formatted(date: .abbreviated, time: .shortened))
                 .font(.system(size: 11)).foregroundStyle(Theme.textDim)
         }

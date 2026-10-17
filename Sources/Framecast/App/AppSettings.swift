@@ -33,6 +33,8 @@ final class AppSettings: ObservableObject {
     @Published var exportQuality: String { didSet { d.set(exportQuality, forKey: "export.quality") } }
     @Published var exportCodec: String { didSet { d.set(exportCodec, forKey: "export.codec") } }
     @Published var showQuickExportWidget: Bool { didSet { d.set(showQuickExportWidget, forKey: "export.widget") } }
+    /// What happens when a recording stops.
+    @Published var afterRecording: AfterRecording { didSet { d.set(afterRecording.rawValue, forKey: "rec.after") } }
 
     // Advanced
     @Published var disableHardwareAcceleration: Bool { didSet { d.set(disableHardwareAcceleration, forKey: "adv.noHW") } }
@@ -72,6 +74,7 @@ final class AppSettings: ObservableObject {
         exportQuality = d.string(forKey: "export.quality") ?? "high"
         exportCodec = d.string(forKey: "export.codec") ?? "h264"
         showQuickExportWidget = d.bool(forKey: "export.widget")
+        afterRecording = AfterRecording(rawValue: d.string(forKey: "rec.after") ?? "") ?? .createProject
         disableHardwareAcceleration = d.bool(forKey: "adv.noHW")
 
         var map: [ShortcutAction: KeyCombo] = [:]
@@ -166,6 +169,18 @@ final class AppSettings: ObservableObject {
             d.removeObject(forKey: key)
         }
         try? SMAppService.mainApp.unregister()
+    }
+}
+
+enum AfterRecording: String, CaseIterable, Identifiable {
+    case createProject, copyToClipboard, saveToFile
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .createProject: return "Create project"
+        case .copyToClipboard: return "Export and copy to clipboard"
+        case .saveToFile: return "Export and save to file"
+        }
     }
 }
 

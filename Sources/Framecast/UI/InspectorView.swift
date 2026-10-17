@@ -675,13 +675,9 @@ private struct ZoomDetail: View {
                     }
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Theme.textDim)
-                    HStack {
-                        Button { model.seek(source: zoom.start) } label: { Label("Go to zoom", systemImage: "arrow.right.to.line") }
-                            .buttonStyle(SecondaryButtonStyle())
-                        Spacer()
-                        Button(role: .destructive) { model.deleteSelection() } label: { Label("Delete", systemImage: "trash") }
-                            .buttonStyle(SecondaryButtonStyle())
-                    }
+                    WideButton(title: "Focus the timeline on the zoom start", icon: "arrow.right.to.line") { model.seek(source: zoom.start) }
+                    Divider().padding(.vertical, 4)
+                    WideButton(title: "Remove zoom", icon: "trash", destructive: true) { model.deleteSelection() }
                 }
                 .padding(16)
             }
@@ -774,14 +770,10 @@ private struct ClipDetail: View {
                         row("Source", "\(formatTime(clip.start, fraction: true)) – \(formatTime(clip.end, fraction: true))")
                         row("Length in video", String(format: "%.1fs", clip.duration / clip.speed))
                     }
-                    HStack {
-                        Button { model.splitAtPlayhead() } label: { Label("Split", systemImage: "scissors") }
-                            .buttonStyle(SecondaryButtonStyle())
-                        Spacer()
-                        Button(role: .destructive) { model.deleteSelection() } label: { Label("Cut clip", systemImage: "trash") }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(model.doc.clips.count < 2)
-                    }
+                    WideButton(title: "Cut at playhead", icon: "scissors") { model.splitAtPlayhead() }
+                    Divider().padding(.vertical, 4)
+                    WideButton(title: "Remove clip", icon: "trash", destructive: true) { model.deleteSelection() }
+                        .disabled(model.doc.clips.count < 2)
                 }
                 .padding(16)
             }
@@ -806,14 +798,22 @@ private struct DetailHeader: View {
 
     var body: some View {
         HStack {
-            Image(systemName: icon).foregroundStyle(color)
-            Text(title).font(.system(size: 13, weight: .semibold))
+            Button(action: onClose) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left").font(.system(size: 12, weight: .semibold))
+                    Text("Close \(title) editor").font(.system(size: 12.5, weight: .medium))
+                }
+                .padding(.horizontal, 12).frame(height: 32)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.06)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Back (Esc)")
             Spacer()
-            IconButton(icon: "xmark", help: "Close (Esc)", action: onClose)
+            Image(systemName: icon).foregroundStyle(color)
         }
         .padding(.horizontal, 14)
-        .frame(height: 46)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
+        .frame(height: 54)
     }
 }
 
@@ -974,7 +974,32 @@ private struct EffectDetail: View {
                         note("The camera fades out for this part of the video.")
                     }
 
-                    ToggleRow(label: "Disable", isOn: binding(\.disabled, key: "disabled"))
+                    if effect.kind == .blur {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.shield").foregroundStyle(.orange)
+                            Text("Make sure the blur covers the whole part of the timeline where the sensitive data is visible.")
+                                .font(.system(size: 11.5)).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.orange.opacity(0.1)))
+                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.orange.opacity(0.3)))
+                    }
+                    if effect.kind.hasRegion || effect.kind == .text {
+                        Text(effect.kind == .text ? "Tip: drag the title on the video to place it anywhere."
+                                                  : "Tip: move and resize the area right on the video (pause first).")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                    }
+                    WideButton(title: "Focus the timeline on the \(effect.kind.label.lowercased()) start", icon: "arrow.right.to.line") {
+                        model.seek(source: effect.start + min(0.3, effect.duration / 2))
+                    }
+                    Divider().padding(.vertical, 2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ToggleRow(label: "Disable", isOn: binding(\.disabled, key: "disabled"))
+                        Text("When disabled, the \(effect.kind.label.lowercased()) isn't shown, but it stays on the timeline.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack {
                         Text("Starts \(formatTime(effect.start, fraction: true))")
                         Spacer()
@@ -982,15 +1007,9 @@ private struct EffectDetail: View {
                     }
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Theme.textDim)
-                    HStack {
-                        Button { model.seek(source: effect.start) } label: { Label("Go to", systemImage: "arrow.right.to.line") }
-                            .buttonStyle(SecondaryButtonStyle())
-                        Button { model.duplicateEffect(effect.id) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                            .buttonStyle(SecondaryButtonStyle())
-                        Spacer()
-                        Button(role: .destructive) { model.deleteSelection() } label: { Label("Delete", systemImage: "trash") }
-                            .buttonStyle(SecondaryButtonStyle())
-                    }
+                    WideButton(title: "Duplicate", icon: "plus.square.on.square") { model.duplicateEffect(effect.id) }
+                    Divider().padding(.vertical, 2)
+                    WideButton(title: "Remove \(effect.kind.label.lowercased())", icon: "trash", destructive: true) { model.deleteSelection() }
                 }
                 .padding(16)
             }
@@ -1002,80 +1021,28 @@ private struct EffectDetail: View {
     }
 }
 
-/// Shows a frame of the recording; drag to draw the effect's area, or drag inside it to move it.
+/// A frame of the recording with the effect's area: drag inside to move it, drag a handle to resize it.
 private struct RegionPicker: View {
     @ObservedObject var model: EditorModel
     let effect: EffectSegment
     let tint: Color
     @State private var frame: CGImage?
-    @State private var dragMode: DragMode?
-
-    private enum DragMode { case draw(CGPoint), move(CGRect) }
 
     var body: some View {
         let aspect = CGFloat(model.doc.info.pixelWidth) / CGFloat(max(1, model.doc.info.pixelHeight))
         VStack(alignment: .leading, spacing: 6) {
             Text("Area").font(.system(size: 12))
-            GeometryReader { geo in
-                let W = geo.size.width, H = geo.size.height
-                ZStack(alignment: .topLeading) {
-                    if let frame {
-                        Image(decorative: frame, scale: 1).resizable()
-                    } else {
-                        Rectangle().fill(Theme.fill.opacity(0.06))
-                    }
-                    if effect.kind == .spotlight {
-                        Rectangle().fill(Color.black.opacity(0.5))
-                            .mask {
-                                Rectangle().overlay {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .frame(width: effect.w * W, height: effect.h * H)
-                                        .position(x: (effect.x + effect.w / 2) * W, y: (effect.y + effect.h / 2) * H)
-                                        .blendMode(.destinationOut)
-                                }
-                                .compositingGroup()
-                            }
-                    }
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(effect.kind == .blur ? tint.opacity(0.35) : Color.clear)
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tint, lineWidth: 2))
-                        .frame(width: max(2, effect.w * W), height: max(2, effect.h * H))
-                        .offset(x: effect.x * W, y: effect.y * H)
+            RectEditor(rect: Binding(get: { effect.region }, set: { r in
+                model.updateEffect(effect.id, coalesce: "region-\(effect.id)") {
+                    $0.x = Double(r.minX); $0.y = Double(r.minY); $0.w = Double(r.width); $0.h = Double(r.height)
                 }
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        let p = CGPoint(x: clamp(v.location.x / W, 0, 1), y: clamp(v.location.y / H, 0, 1))
-                        if dragMode == nil {
-                            let start = CGPoint(x: v.startLocation.x / W, y: v.startLocation.y / H)
-                            dragMode = effect.region.contains(start) ? .move(effect.region) : .draw(start)
-                        }
-                        switch dragMode {
-                        case .draw(let s):
-                            let r = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
-                            guard r.width > 0.01, r.height > 0.01 else { return }
-                            set(r)
-                        case .move(let r0):
-                            let dx = v.translation.width / W, dy = v.translation.height / H
-                            set(CGRect(x: clamp(r0.minX + dx, 0, 1 - r0.width), y: clamp(r0.minY + dy, 0, 1 - r0.height),
-                                       width: r0.width, height: r0.height))
-                        case nil: break
-                        }
-                    }
-                    .onEnded { _ in dragMode = nil })
-            }
+            }), ratio: nil, image: frame, imageAspect: aspect)
             .aspectRatio(aspect, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
             .task(id: effect.id) { frame = await model.rawFrame(at: effect.start + min(0.5, effect.duration / 2)) }
-            Text("Drag to draw the area, or drag inside it to move it.")
+            Text("Drag inside to move, drag a handle to resize.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textDim)
-        }
-    }
-
-    private func set(_ r: CGRect) {
-        model.updateEffect(effect.id, coalesce: "region-\(effect.id)") {
-            $0.x = Double(r.minX); $0.y = Double(r.minY); $0.w = Double(r.width); $0.h = Double(r.height)
         }
     }
 }
@@ -1227,5 +1194,26 @@ private struct CaptionRow: View {
 
     private func commit() {
         if text != cue.text { model.updateCaption(cue.id, text: text) }
+    }
+}
+
+/// A full-width inspector button, like "Remove zoom".
+private struct WideButton: View {
+    let title: String
+    let icon: String
+    var destructive = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12.5, weight: .medium))
+                .frame(maxWidth: .infinity).frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 9).fill(destructive ? Color.red.opacity(0.1) : Theme.fill.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(destructive ? Color.red.opacity(0.25) : Theme.border))
+                .foregroundStyle(destructive ? Color.red : Theme.text)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

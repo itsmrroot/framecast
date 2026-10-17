@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0
+
+- Name a recording and add a note about why you made it, before you record (home screen, display picker or area selector). Notes show on library cards and in the editor
+- "Start recording ▾": choose what happens after recording (create project, export and copy to clipboard, or export and save to a file) and whether zooms are created
+- The display picker shows the display's resolution and refresh rate
+- System audio from all apps, only the apps you choose, or none
+- Move and resize blur and spotlight areas right on the video, and drag titles anywhere
+- Effect, zoom and clip editors in a cleaner style: "← Close … editor", "Focus the timeline on the start", Disable with an explanation, and full-width Remove buttons
+- Dock menu: new recording, record display, open last project, recent projects, show in Dock and settings
+- Motion blur no longer softens the picture while the camera settles after a zoom
+
 ## 1.3.4
 
 - Recording toolbar: camera, microphone, system audio, folder and ⚙ now light up when you point at them

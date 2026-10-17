@@ -48,6 +48,8 @@ final class EditorModel: ObservableObject {
     let player = AVPlayer()
     private(set) var assets: ProjectAssets?
     private(set) var built: BuiltComposition?
+    /// The render model the preview is currently showing (for on-preview editing).
+    private(set) var renderModel: RenderModel?
     private var cursorPathCache: (key: String, path: CursorPath)?
     private var undoStack: [Snapshot] = []
     private var redoStack: [Snapshot] = []
@@ -259,6 +261,7 @@ final class EditorModel: ObservableObject {
         let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
         self.built = built
         let model = makeRenderModel(for: built)
+        renderModel = model
         outputAspect = model.aspect
         let item = AVPlayerItem(asset: built.composition)
         item.videoComposition = previewVideoComposition(model, built: built)
@@ -281,6 +284,7 @@ final class EditorModel: ObservableObject {
     private func refreshRender() {
         guard let built, let item = player.currentItem else { return }
         let model = makeRenderModel(for: built)
+        renderModel = model
         outputAspect = model.aspect
         item.videoComposition = previewVideoComposition(model, built: built)
         item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style)
@@ -599,6 +603,13 @@ final class EditorModel: ObservableObject {
     private func srtTime(_ t: Double) -> String {
         let ms = Int((max(0, t) * 1000).rounded())
         return String(format: "%02d:%02d:%02d,%03d", ms / 3_600_000, (ms / 60_000) % 60, (ms / 1000) % 60, ms % 1000)
+    }
+
+    /// The project's note (not part of undo; saved with the project).
+    func setNotes(_ text: String) {
+        guard text != doc.notes else { return }
+        doc.notes = text
+        scheduleSave()
     }
 
     func rename(_ name: String) {

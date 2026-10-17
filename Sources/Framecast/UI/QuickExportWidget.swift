@@ -61,7 +61,8 @@ final class QuickExportWidget: ObservableObject {
         ProjectLibrary.shared.reload()
     }
 
-    func export() {
+    /// Exports with the quick export settings. `destination` nil = Exports folder + clipboard.
+    func export(to destination: URL? = nil) {
         guard let folder else { return }
         phase = .exporting(0)
         let settings = AppSettings.shared.exportSettings
@@ -74,15 +75,7 @@ final class QuickExportWidget: ObservableObject {
                 for _ in 0..<200 where !model.isReady && model.loadError == nil { try await Task.sleep(nanoseconds: 50_000_000) }
                 guard current() else { return }
                 guard let job = model.exportJob() else { throw Exporter.ExportError.failed(model.loadError ?? "The recording couldn't be loaded.") }
-                let dir = ProjectLibrary.shared.exportsFolder
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let base = name.replacingOccurrences(of: "/", with: "-")
-                var url = dir.appendingPathComponent("\(base).\(settings.format.fileExtension)")
-                var n = 2
-                while FileManager.default.fileExists(atPath: url.path) {
-                    url = dir.appendingPathComponent("\(base) \(n).\(settings.format.fileExtension)")
-                    n += 1
-                }
+                let url = destination ?? ProjectLibrary.shared.uniqueExportURL(name: name, ext: settings.format.fileExtension)
                 guard current() else { return }
                 let exp = Exporter()
                 exporter = exp
@@ -94,8 +87,10 @@ final class QuickExportWidget: ObservableObject {
                 }
                 guard current() else { return }
                 exporter = nil
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([url as NSURL])
+                if destination == nil {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.writeObjects([url as NSURL])
+                }
                 phase = .done(url)
             } catch Exporter.ExportError.cancelled {
                 if current() { phase = .ready }

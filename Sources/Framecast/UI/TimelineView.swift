@@ -578,7 +578,14 @@ struct TimelineView: View {
                 }
             }
             .contentShape(Rectangle())
-            .onTapGesture { model.selection = .effect(e.id) }
+            .onTapGesture {
+                model.selection = .effect(e.id)
+                // Show the effect: move the playhead into it if it's elsewhere.
+                if model.sourceTime < e.start || model.sourceTime > e.end {
+                    model.player.pause()
+                    model.seek(source: e.start + min(0.3, e.duration / 2))
+                }
+            }
             .gesture(DragGesture(minimumDistance: 3).onChanged { v in
                 model.selection = .effect(e.id)
                 let ns = clamp(e.start + Double(v.translation.width / pps), 0, model.sourceDuration - e.duration)
