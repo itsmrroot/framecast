@@ -4,22 +4,11 @@ import AppKit
 @main
 struct FramecastApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @ObservedObject private var recorder = RecordingCoordinator.shared
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarContent(recorder: recorder)
-        } label: {
-            if recorder.isRecording {
-                HStack(spacing: 4) {
-                    Image(systemName: recorder.phase == .paused ? "pause.circle.fill" : "record.circle.fill")
-                    Text(formatTime(recorder.elapsed)).monospacedDigit()
-                }
-            } else {
-                Image(systemName: "record.circle")
-            }
-        }
-
+        // The menu bar item is MenuBarController (App/MenuBar.swift); a SwiftUI MenuBarExtra here would add a second one.
+        // A scene is still required for the app's menus, so an empty Settings scene carries them.
+        Settings { EmptyView() }
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
@@ -79,30 +68,6 @@ struct FramecastApp: App {
                 }
             }
         }
-    }
-}
-
-struct MenuBarContent: View {
-    @ObservedObject var recorder: RecordingCoordinator
-
-    var body: some View {
-        if recorder.isRecording {
-            Button("Stop Recording  ⌘⇧2") { recorder.stop() }
-            Button(recorder.phase == .paused ? "Resume" : "Pause") { recorder.togglePause() }
-            Button("Restart") { recorder.restart() }
-            Button("Cancel Recording") { recorder.cancel() }
-        } else {
-            Button("New Recording…  ⌘⇧2") { RecordingToolbar.shared.show() }
-                .disabled(recorder.isActive)
-            Button("Record Display") { RecordingToolbar.shared.start(.display) }
-                .disabled(recorder.isActive)
-        }
-        Divider()
-        Button("Open Framecast") { WindowManager.shared.showHome() }
-        Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
-        Button("Settings…") { WindowManager.shared.showSettings() }
-        Divider()
-        Button("Quit Framecast") { NSApp.terminate(nil) }
     }
 }
 

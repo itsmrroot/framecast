@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.1
+
+- Fixed two Framecast icons (and two recording timers) in the menu bar: an old built-in menu bar item was still there next to the new one
+
 ## 1.11.0
 
 - The split tool moves like Screen Studio's: turning it on or off makes the timeline lanes dip and spring back, one after another
