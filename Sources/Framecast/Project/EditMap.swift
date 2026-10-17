@@ -108,6 +108,26 @@ enum ActivityAnalyzer {
         return ranges
     }
 
+    /// Pauses in the audio: at least `minLength` seconds below `threshold`, trimmed by `margin` so words aren't clipped.
+    static func silentRanges(waveform: [Float], duration: Double, threshold: Float = 0.05,
+                             minLength: Double = 0.9, margin: Double = 0.2) -> [(Double, Double)] {
+        guard waveform.count > 1, duration > 0 else { return [] }
+        let binDur = duration / Double(waveform.count)
+        var ranges: [(Double, Double)] = []
+        var start: Int?
+        for (i, p) in (waveform + [1]).enumerated() {
+            if p < threshold {
+                if start == nil { start = i }
+            } else if let s = start {
+                let a = Double(s) * binDur, b = min(duration, Double(i) * binDur)
+                let lo = s == 0 ? 0 : a + margin, hi = i >= waveform.count ? duration : b - margin
+                if b - a >= minLength, hi - lo >= 0.5 { ranges.append((lo, hi)) }
+                start = nil
+            }
+        }
+        return ranges
+    }
+
     /// Bursts of plain typing (no shortcuts), at least `minLength` seconds long.
     static func typingRanges(keys: [KeyEvent], maxGap: Double = 1.2, minLength: Double = 1.5) -> [(Double, Double)] {
         let typed = keys.filter { !$0.isShortcut || $0.label == "⌫" }.map(\.t).sorted()

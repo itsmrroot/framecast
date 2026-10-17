@@ -105,13 +105,16 @@ struct ZoomSegment: Codable, Identifiable, Equatable {
 }
 
 enum EffectKind: String, Codable, CaseIterable, Identifiable {
-    case blur, spotlight, text, hideCursor, cameraFull, cameraHidden
+    case blur, spotlight, text, image, annotation, hideCursor, cameraFull, cameraHidden, cameraMove
     var id: String { rawValue }
     var label: String {
         switch self {
         case .blur: return "Blur"
         case .spotlight: return "Spotlight"
         case .text: return "Text"
+        case .image: return "Image"
+        case .annotation: return "Arrow or shape"
+        case .cameraMove: return "Move camera"
         case .hideCursor: return "Hide cursor"
         case .cameraFull: return "Camera full screen"
         case .cameraHidden: return "Hide camera"
@@ -122,14 +125,67 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .blur: return "eye.slash"
         case .spotlight: return "flashlight.on.fill"
         case .text: return "textformat"
+        case .image: return "photo"
+        case .annotation: return "arrow.up.right"
+        case .cameraMove: return "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left"
         case .hideCursor: return "cursorarrow.slash"
         case .cameraFull: return "person.crop.rectangle"
         case .cameraHidden: return "video.slash"
         }
     }
     /// Effects that apply to an area of the recording.
-    var hasRegion: Bool { self == .blur || self == .spotlight }
-    var needsCamera: Bool { self == .cameraFull || self == .cameraHidden }
+    var hasRegion: Bool { self == .blur || self == .spotlight || self == .annotation }
+    var needsCamera: Bool { self == .cameraFull || self == .cameraHidden || self == .cameraMove }
+}
+
+enum AnnotationShape: String, Codable, CaseIterable, Identifiable {
+    case arrow, box, ellipse
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .arrow: return "Arrow"
+        case .box: return "Box"
+        case .ellipse: return "Circle"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .arrow: return "arrow.up.right"
+        case .box: return "rectangle"
+        case .ellipse: return "circle"
+        }
+    }
+}
+
+/// Which way an arrow points across its area.
+enum ArrowDirection: String, Codable, CaseIterable, Identifiable {
+    case downRight, downLeft, upRight, upLeft, right, left, down, up
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .downRight: return "arrow.down.right"
+        case .downLeft: return "arrow.down.left"
+        case .upRight: return "arrow.up.right"
+        case .upLeft: return "arrow.up.left"
+        case .right: return "arrow.right"
+        case .left: return "arrow.left"
+        case .down: return "arrow.down"
+        case .up: return "arrow.up"
+        }
+    }
+    /// Tail and tip in the unit square (top-left origin).
+    var points: (CGPoint, CGPoint) {
+        switch self {
+        case .downRight: return (CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1))
+        case .downLeft: return (CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1))
+        case .upRight: return (CGPoint(x: 0, y: 1), CGPoint(x: 1, y: 0))
+        case .upLeft: return (CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 0))
+        case .right: return (CGPoint(x: 0, y: 0.5), CGPoint(x: 1, y: 0.5))
+        case .left: return (CGPoint(x: 1, y: 0.5), CGPoint(x: 0, y: 0.5))
+        case .down: return (CGPoint(x: 0.5, y: 0), CGPoint(x: 0.5, y: 1))
+        case .up: return (CGPoint(x: 0.5, y: 1), CGPoint(x: 0.5, y: 0))
+        }
+    }
 }
 
 enum TextPlacement: String, Codable, CaseIterable, Identifiable {
@@ -258,6 +314,20 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     /// A smaller second line under the title.
     var subtitle = ""
     var titleStyle = TitleStyle()
+    /// Image overlay: a file in the project's "overlays" folder, its width as a fraction of the canvas
+    /// (centred on textX/textY), rounded corners in 1080p pixels, and a drop shadow.
+    var imageFile = ""
+    var imageWidth: Double = 0.3
+    var imageCorner: Double = 14
+    var imageShadow = true
+    /// Arrows and shapes, drawn on the recording in the effect's area.
+    var shape: AnnotationShape = .arrow
+    var arrowDirection: ArrowDirection = .downRight
+    var strokeColor = RGBA(hex: 0xFF453A)
+    var strokeWidth: Double = 6
+    /// "Move camera": where the camera bubble goes, and its size, for this part.
+    var cameraCorner: CameraCorner = .topRight
+    var cameraSize: Double = 0.3
     /// Kept on the timeline but not rendered.
     var disabled = false
     var duration: Double { end - start }
@@ -268,6 +338,8 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         self.start = start
         self.end = end
         if kind == .spotlight { intensity = 0.55 }
+        if kind == .annotation { x = 0.35; y = 0.3; w = 0.2; h = 0.18 }
+        if kind == .image { textX = 0.78; textY = 0.25 }
     }
 
     init(from decoder: Decoder) throws {
@@ -291,6 +363,16 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         textY = try c.decodeIfPresent(Double.self, forKey: .textY) ?? 0.5
         subtitle = (try? c.decodeIfPresent(String.self, forKey: .subtitle)) ?? ""
         titleStyle = (try? c.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
+        imageFile = (try? c.decodeIfPresent(String.self, forKey: .imageFile)) ?? ""
+        imageWidth = (try? c.decodeIfPresent(Double.self, forKey: .imageWidth)) ?? 0.3
+        imageCorner = (try? c.decodeIfPresent(Double.self, forKey: .imageCorner)) ?? 14
+        imageShadow = (try? c.decodeIfPresent(Bool.self, forKey: .imageShadow)) ?? true
+        shape = (try? c.decodeIfPresent(AnnotationShape.self, forKey: .shape)) ?? .arrow
+        arrowDirection = (try? c.decodeIfPresent(ArrowDirection.self, forKey: .arrowDirection)) ?? .downRight
+        strokeColor = (try? c.decodeIfPresent(RGBA.self, forKey: .strokeColor)) ?? RGBA(hex: 0xFF453A)
+        strokeWidth = (try? c.decodeIfPresent(Double.self, forKey: .strokeWidth)) ?? 6
+        cameraCorner = (try? c.decodeIfPresent(CameraCorner.self, forKey: .cameraCorner)) ?? .topRight
+        cameraSize = (try? c.decodeIfPresent(Double.self, forKey: .cameraSize)) ?? 0.3
     }
 }
 

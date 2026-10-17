@@ -29,6 +29,8 @@ final class RenderModel: @unchecked Sendable {
     /// Visible part of the recording; everything else in the model is relative to it.
     let crop: CropRect
     let effects: [EffectSegment]
+    /// Image overlay files, loaded by name.
+    let overlayImages: [String: CIImage]
     let captions: [CaptionCue]
     /// Keystroke badges to show: each label is visible from `start` until `end`.
     let keyItems: [(start: Double, end: Double, label: String)]
@@ -39,7 +41,9 @@ final class RenderModel: @unchecked Sendable {
     init(style: Style, info: RecordingInfo, editMap: EditMap, zooms: [ZoomSegment], cursorPath: CursorPath?,
          cursorTrack: CursorTrack, cursorImages: [String: CIImage],
          screenTrackID: CMPersistentTrackID, webcamTrackID: CMPersistentTrackID?,
-         effects: [EffectSegment] = [], captions: [CaptionCue] = [], keys: [KeyEvent] = []) {
+         effects: [EffectSegment] = [], captions: [CaptionCue] = [], keys: [KeyEvent] = [],
+         overlayImages: [String: CIImage] = [:]) {
+        self.overlayImages = overlayImages
         self.style = style
         let crop = (style.crop?.isFull ?? true) ? CropRect.full : style.crop!
         self.crop = crop
@@ -190,6 +194,17 @@ final class RenderModel: @unchecked Sendable {
     }
 
     /// Strongest envelope among active effects of a kind.
+    /// The "Move camera" effect in force at `t`, with how far the move has gone.
+    func cameraMove(at t: Double) -> (EffectSegment, Double)? {
+        var best: (EffectSegment, Double)?
+        for e in effects where e.kind == .cameraMove {
+            if e.start > t { break }
+            let a = RenderModel.envelope(e, at: t)
+            if a > (best?.1 ?? 0.001) { best = (e, a) }
+        }
+        return best
+    }
+
     func amount(of kind: EffectKind, at t: Double) -> Double {
         var best = 0.0
         for e in effects where e.kind == kind {

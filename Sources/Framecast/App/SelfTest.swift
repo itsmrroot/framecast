@@ -101,6 +101,12 @@ enum SelfTest {
         check(ts?.card == .light && ts?.font == .serif && ts?.align == .left, "title style: bad value dropped, good kept")
         let oldTitle = try? JSONDecoder().decode(EffectSegment.self, from: Data(#"{"kind":"text","start":0,"end":2,"text":"Hi"}"#.utf8))
         check(oldTitle?.titleStyle == TitleStyle() && oldTitle?.subtitle == "", "titles from older projects get the classic look")
+        // 10 s of audio, silent from 3 to 6 s: one pause found, trimmed so words aren't clipped.
+        let wave: [Float] = (0..<100).map { i in (30..<60).contains(i) ? 0.01 : 0.5 }
+        let quiet = ActivityAnalyzer.silentRanges(waveform: wave, duration: 10)
+        check(quiet.count == 1 && abs(quiet[0].0 - 3.2) < 0.01 && abs(quiet[0].1 - 5.8) < 0.01, "silent pause found and trimmed (\(quiet))")
+        let fx = try? JSONDecoder().decode(EffectSegment.self, from: Data(#"{"kind":"annotation","start":0,"end":2,"shape":"spiral"}"#.utf8))
+        check(fx?.shape == .arrow && fx?.strokeWidth == 6, "arrow: unknown shape falls back, defaults kept")
         let map = EditMap(clips: [Clip(start: 0, end: 2), Clip(start: 5, end: 7, speed: 2)])
         check(abs(map.duration - 3) < 0.0001 && abs(map.compTime(source: 6) - 2.5) < 0.0001 && abs(map.compTime(source: 3) - 2) < 0.0001,
               "edited time closes cuts and applies speed")

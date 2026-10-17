@@ -73,6 +73,7 @@ struct TimelineView: View {
                                 .frame(width: contentW, height: totalH)
                                 .contentShape(Rectangle())
                                 .gesture(SpatialTapGesture().onEnded { v in model.cut(at: src(v.location.x, pps)) })
+                                .pointerStyle(.image(Image(nsImage: ScissorsCursor.image), hotSpot: UnitPoint(x: 0.5, y: 0.5)))
                         }
                         if bladeActive, let x = hoverX {
                             BladeLine(height: totalH - 4).offset(x: x - 13).allowsHitTesting(false)
@@ -213,6 +214,10 @@ struct TimelineView: View {
                 Button("Speed Up Idle Moments 4×") { model.applySmartSpeed(.idle, speed: 4) }.disabled(!hasActivity)
                 Button("Speed Up Idle Moments 8×") { model.applySmartSpeed(.idle, speed: 8) }.disabled(!hasActivity)
                 Button("Cut Idle Moments") { model.applySmartSpeed(.idle, speed: nil) }.disabled(!hasActivity)
+            }
+            Section("Silent pauses (no talking)") {
+                Button("Cut Silent Pauses") { model.applySmartSpeed(.silence, speed: nil) }.disabled(model.waveform.isEmpty)
+                Button("Speed Up Silent Pauses 4×") { model.applySmartSpeed(.silence, speed: 4) }.disabled(model.waveform.isEmpty)
             }
             Section("Typing") {
                 Button("Speed Up Typing 2×") { model.applySmartSpeed(.typing, speed: 2) }.disabled(!hasTyping)
@@ -631,6 +636,9 @@ struct TimelineView: View {
         case .blur: return Color(red: 0.25, green: 0.72, blue: 0.85)
         case .spotlight: return Color(red: 0.95, green: 0.78, blue: 0.25)
         case .text: return Color(red: 0.95, green: 0.42, blue: 0.62)
+        case .image: return Color(red: 0.55, green: 0.45, blue: 0.95)
+        case .annotation: return Color(red: 0.98, green: 0.45, blue: 0.3)
+        case .cameraMove: return Color(red: 0.35, green: 0.8, blue: 0.5)
         case .hideCursor: return Color(red: 0.6, green: 0.6, blue: 0.66)
         case .cameraFull, .cameraHidden: return Color(red: 0.35, green: 0.8, blue: 0.5)
         }
@@ -652,7 +660,7 @@ struct TimelineView: View {
                 )
                 .overlay(alignment: .leading) {
                     if model.doc.effects.isEmpty {
-                        Label("Effects: blur, spotlight, titles, hide cursor or camera. Add one with + Effect", systemImage: "sparkles")
+                        Label("Effects: blur, spotlight, titles, images, arrows, cursor and camera. Add one with + Effect", systemImage: "sparkles")
                             .font(.system(size: 11)).foregroundStyle(Theme.textFaint).padding(.leading, 10)
                     }
                 }
@@ -679,7 +687,7 @@ struct TimelineView: View {
         let selected = model.selection == .effect(e.id)
         let w = max(4, CGFloat(ce - cs) * pps)
         let color = TimelineView.effectColor(e.kind)
-        let title = e.kind == .text ? e.text : e.kind.label
+        let title = e.kind == .text ? e.text : (e.kind == .annotation ? e.shape.label : e.kind.label)
         return effectFace(e, selected: selected, w: w, color: color, title: title)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -836,4 +844,32 @@ private struct BladeLine: View {
         }
         .frame(width: 26, height: height)
     }
+}
+
+/// The split tool's pointer: scissors with a dark outline, readable on any lane.
+enum ScissorsCursor {
+    static let image: NSImage = {
+        let size = NSSize(width: 26, height: 26)
+        return NSImage(size: size, flipped: false) { rect in
+            let config = NSImage.SymbolConfiguration(pointSize: 17, weight: .bold)
+            guard let symbol = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Split")?.withSymbolConfiguration(config) else { return false }
+            func tinted(_ color: NSColor) -> NSImage {
+                let img = NSImage(size: symbol.size, flipped: false) { r in
+                    symbol.draw(in: r)
+                    color.set()
+                    r.fill(using: .sourceAtop)
+                    return true
+                }
+                return img
+            }
+            let s = symbol.size
+            let origin = NSPoint(x: (rect.width - s.width) / 2, y: (rect.height - s.height) / 2)
+            let outline = tinted(.black)
+            for dx in [-1.5, 0, 1.5] { for dy in [-1.5, 0, 1.5] where dx != 0 || dy != 0 {
+                outline.draw(at: NSPoint(x: origin.x + dx, y: origin.y + dy), from: .zero, operation: .sourceOver, fraction: 0.85)
+            } }
+            tinted(.white).draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+    }()
 }

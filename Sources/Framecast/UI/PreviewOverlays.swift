@@ -189,6 +189,93 @@ struct TitleCanvasOverlay: View {
     }
 }
 
+/// Move an image overlay by dragging it, resize it with the corner handle. Drawn live while dragging.
+struct ImageCanvasOverlay: View {
+    @ObservedObject var model: EditorModel
+    let effect: EffectSegment
+    let size: CGSize
+    @State private var image: NSImage?
+    @State private var start: (center: CGPoint, width: CGFloat)?
+    @State private var live: (center: CGPoint, width: CGFloat)?
+
+    var body: some View {
+        let base = Self.frame(effect, size: size, model: model)
+        let frame = live.map { l in
+            let h = base.width > 0 ? l.width * base.height / base.width : 0
+            return CGRect(x: l.center.x - l.width / 2, y: l.center.y - h / 2, width: l.width, height: h)
+        } ?? base
+        ZStack(alignment: .topLeading) {
+            if live != nil, let image {
+                Image(nsImage: image).resizable()
+                    .frame(width: frame.width, height: frame.height)
+                    .clipShape(RoundedRectangle(cornerRadius: CGFloat(effect.imageCorner) * min(size.width, size.height) / 1080, style: .continuous))
+                    .offset(x: frame.minX, y: frame.minY)
+                    .allowsHitTesting(false)
+            }
+            Rectangle()
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])).foregroundStyle(.white)
+                .background(Color.white.opacity(live == nil ? 0.05 : 0))
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { v in
+                        begin(frame)
+                        guard let s = start else { return }
+                        live = (CGPoint(x: clamp(s.center.x + v.translation.width, 0, size.width),
+                                        y: clamp(s.center.y + v.translation.height, 0, size.height)), s.width)
+                    }
+                    .onEnded { _ in commit() })
+            Circle().fill(.white).frame(width: 13, height: 13)
+                .overlay(Circle().strokeBorder(Color.black.opacity(0.25)))
+                .shadow(color: .black.opacity(0.4), radius: 2)
+                .position(x: frame.maxX, y: frame.maxY)
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { v in
+                        begin(frame)
+                        guard let s = start else { return }
+                        // Corner drag: grow or shrink around the centre.
+                        live = (s.center, clamp(s.width + v.translation.width * 2, 24, size.width * 1.5))
+                    }
+                    .onEnded { _ in commit() })
+                .pointerStyle(.frameResize(position: .bottomTrailing))
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .onAppear {
+            image = NSImage(contentsOf: model.folder.appendingPathComponent("overlays", isDirectory: true).appendingPathComponent(effect.imageFile))
+        }
+        .onDisappear { if model.hiddenEffect == effect.id { model.hiddenEffect = nil } }
+    }
+
+    private func begin(_ frame: CGRect) {
+        guard start == nil else { return }
+        start = (CGPoint(x: frame.midX, y: frame.midY), frame.width)
+        model.hiddenEffect = effect.id
+    }
+
+    private func commit() {
+        if let l = live {
+            model.updateEffect(effect.id, coalesce: "imgpos-\(effect.id)") {
+                $0.textX = clamp(Double(l.center.x / size.width), 0, 1)
+                $0.textY = clamp(Double(l.center.y / size.height), 0, 1)
+                $0.imageWidth = clamp(Double(l.width / size.width), 0.03, 1.5)
+            }
+        }
+        start = nil
+        live = nil
+        model.hiddenEffect = nil
+    }
+
+    /// Where the image sits on the canvas (top-left view coordinates), matching the renderer.
+    @MainActor
+    static func frame(_ e: EffectSegment, size: CGSize, model: EditorModel) -> CGRect {
+        guard let ext = model.renderModel?.overlayImages[e.imageFile]?.extent, ext.width > 0 else { return .zero }
+        let w = CGFloat(e.imageWidth) * size.width
+        let h = ext.height * w / ext.width
+        return CGRect(x: CGFloat(e.textX) * size.width - w / 2, y: CGFloat(e.textY) * size.height - h / 2, width: w, height: h)
+    }
+}
+
 enum PreviewHitTest {
     /// The effect under a click on the preview (top-left view point): titles first, then blur/spotlight areas.
     @MainActor
@@ -198,6 +285,9 @@ enum PreviewHitTest {
         if let title = active.last(where: { $0.kind == .text && !$0.text.isEmpty
             && TitleCanvasOverlay.cardFrame($0, size: size).insetBy(dx: -6, dy: -6).contains(p) }) {
             return title
+        }
+        if let image = active.last(where: { $0.kind == .image && ImageCanvasOverlay.frame($0, size: size, model: model).contains(p) }) {
+            return image
         }
         guard let rm = model.renderModel else { return nil }
         let vt = FrameRenderer.shared.viewTransform(model: rm, sourceTime: t, size: size)

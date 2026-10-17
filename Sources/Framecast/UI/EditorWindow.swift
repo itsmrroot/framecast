@@ -519,6 +519,10 @@ private struct PreviewArea: View {
                         } else if e.kind == .text {
                             TitleCanvasOverlay(model: model, effect: e, size: size).frame(width: size.width, height: size.height)
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        } else if e.kind == .image {
+                            ImageCanvasOverlay(model: model, effect: e, size: size).frame(width: size.width, height: size.height)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .id(e.imageFile)
                         }
                     }
                     if !model.isReady && model.loadError == nil {

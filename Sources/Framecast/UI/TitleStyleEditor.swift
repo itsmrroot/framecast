@@ -142,7 +142,7 @@ private struct PresetTile: View {
 }
 
 /// Apple's colours as round swatches, plus a custom colour well.
-private struct SwatchRow: View {
+struct SwatchRow: View {
     let colors: [RGBA]
     let selection: RGBA?
     let allowsAuto: Bool

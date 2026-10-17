@@ -971,6 +971,70 @@ private struct EffectDetail: View {
                         }
                         LabeledSlider(label: "Size", value: binding(\.textSize, key: "tsize"), range: 0.5...2,
                                       format: { String(format: "%.1f×", $0) })
+                    case .image:
+                        ImageOverlayThumb(model: model, file: effect.imageFile)
+                        Button {
+                            if let f = model.chooseOverlayImage() { model.updateEffect(effect.id) { $0.imageFile = f } }
+                        } label: { Label("Replace Image…", systemImage: "photo.on.rectangle") .frame(maxWidth: .infinity) }
+                            .buttonStyle(SecondaryButtonStyle())
+                        LabeledSlider(label: "Size", value: binding(\.imageWidth, key: "iw"), range: 0.05...1,
+                                      format: { "\(Int($0 * 100))%" })
+                        LabeledSlider(label: "Corners", value: binding(\.imageCorner, key: "ic"), range: 0...60,
+                                      format: { "\(Int($0))" })
+                        ToggleRow(label: "Shadow", isOn: binding(\.imageShadow, key: "ish"))
+                        note("A logo, screenshot or sticker over the video. Drag it on the video to place it; drag the corner to resize.")
+                    case .annotation:
+                        RegionPicker(model: model, effect: effect, tint: TimelineView.effectColor(.annotation))
+                        PillPicker(options: AnnotationShape.allCases, selection: binding(\.shape, key: "shape"), label: \.label, icon: { $0.icon })
+                        if effect.shape == .arrow {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Points").font(.system(size: 12))
+                                HStack(spacing: 4) {
+                                    ForEach(ArrowDirection.allCases) { d in
+                                        Button { model.updateEffect(effect.id) { $0.arrowDirection = d } } label: {
+                                            Image(systemName: d.icon).font(.system(size: 12, weight: .semibold))
+                                                .frame(width: 30, height: 28)
+                                                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill.opacity(effect.arrowDirection == d ? 0.14 : 0.05)))
+                                                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(effect.arrowDirection == d ? Theme.accent : .clear, lineWidth: 1.5))
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Arrow points \(d.rawValue)")
+                                    }
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Color").font(.system(size: 12))
+                            SwatchRow(colors: TitleStyle.palette, selection: effect.strokeColor, allowsAuto: false) { c in
+                                if let c { model.updateEffect(effect.id) { $0.strokeColor = c } }
+                            }
+                        }
+                        LabeledSlider(label: "Thickness", value: binding(\.strokeWidth, key: "sw"), range: 2...18,
+                                      format: { "\(Int($0))" })
+                        note("Point at a button or circle what matters. It follows the zoom, like blur.")
+                    case .cameraMove:
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Move to").font(.system(size: 12))
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                                ForEach([CameraCorner.topLeft, .topRight, .bottomLeft, .bottomRight]) { c in
+                                    Button { model.updateEffect(effect.id) { $0.cameraCorner = c } } label: {
+                                        ZStack(alignment: c == .topLeft ? .topLeading : c == .topRight ? .topTrailing : c == .bottomLeft ? .bottomLeading : .bottomTrailing) {
+                                            RoundedRectangle(cornerRadius: 6).fill(Theme.fill.opacity(effect.cameraCorner == c ? 0.14 : 0.05))
+                                            Circle().fill(effect.cameraCorner == c ? Theme.accent : Theme.textDim).frame(width: 12, height: 12).padding(6)
+                                        }
+                                        .frame(height: 44)
+                                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(effect.cameraCorner == c ? Theme.accent : .clear, lineWidth: 1.5))
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(c.rawValue)
+                                }
+                            }
+                        }
+                        LabeledSlider(label: "Size", value: binding(\.cameraSize, key: "cs"), range: 0.12...0.6,
+                                      format: { "\(Int($0 * 100))%" })
+                        note("The camera glides to this corner and size for this part, then back. Handy when it covers something.")
                     case .hideCursor:
                         note("The cursor and click effects fade out for this part of the video.")
                     case .cameraFull:
@@ -1180,6 +1244,11 @@ private struct CaptionRow: View {
                 .lineLimit(1...3)
                 .onSubmit { commit() }
                 .onChange(of: text) { _, _ in commit() }
+            Button { model.cutCaption(cue.id) } label: { Image(systemName: "scissors").font(.system(size: 9.5)) }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textDim)
+                .help("Cut this line out of the video (edit by transcript)")
+                .accessibilityLabel("Cut this line from the video")
             Button { model.deleteCaption(cue.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textFaint)
@@ -1213,5 +1282,23 @@ private struct WideButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A small preview of an image overlay's picture.
+private struct ImageOverlayThumb: View {
+    let model: EditorModel
+    let file: String
+    var body: some View {
+        let url = model.folder.appendingPathComponent("overlays", isDirectory: true).appendingPathComponent(file)
+        Group {
+            if let img = NSImage(contentsOf: url) {
+                Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+            } else {
+                Label("Image missing", systemImage: "photo").foregroundStyle(Theme.textDim)
+            }
+        }
+        .frame(maxWidth: .infinity).frame(height: 110)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(0.05)))
     }
 }

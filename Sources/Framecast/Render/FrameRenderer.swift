@@ -112,6 +112,10 @@ final class FrameRenderer: @unchecked Sendable {
         for (e, a) in active where e.kind == .spotlight {
             out = spotlight(out, hole: regionRect(e.region), dim: e.intensity * a, canvas: CGRect(origin: .zero, size: size), unit: L.unit * s)
         }
+        // Arrows and shapes point at things in the recording, so they follow the zoom too.
+        for (e, a) in active where e.kind == .annotation {
+            out = annotation(e, in: regionRect(e.region), alpha: a, unit: L.unit * s).composited(over: out)
+        }
 
         // Cursor + clicks
         let cursorVisibility = 1 - model.amount(of: .hideCursor, at: t)
@@ -173,6 +177,13 @@ final class FrameRenderer: @unchecked Sendable {
             }
         }
 
+        // Image overlays sit on the canvas, like titles.
+        for (e, a) in active where e.kind == .image {
+            if let img = model.overlayImages[e.imageFile] {
+                out = imageOverlay(img, effect: e, alpha: a, size: size, unit: L.unit).composited(over: out)
+            }
+        }
+
         // Titles sit on the canvas, unaffected by the zoom.
         for (e, a) in active where e.kind == .text && !e.text.isEmpty {
             out = titleCard(e, alpha: a, size: size, unit: L.unit, backdrop: out).composited(over: out)
@@ -184,7 +195,7 @@ final class FrameRenderer: @unchecked Sendable {
             let hidden = model.amount(of: .cameraHidden, at: t)
             if hidden < 0.999 {
                 out = webcamOverlay(camera, style: style.camera, size: size, unit: L.unit, zoom: s,
-                                    full: full, hidden: hidden).composited(over: out)
+                                    full: full, hidden: hidden, move: model.cameraMove(at: t)).composited(over: out)
             }
         }
 
@@ -275,6 +286,77 @@ final class FrameRenderer: @unchecked Sendable {
         ])
         if alpha < 0.999 { img = withAlpha(img, CGFloat(alpha)) }
         return img.composited(over: base)
+    }
+
+    /// An arrow, box or circle in `rect` (Core Image coordinates), drawn with Core Graphics.
+    private func annotation(_ e: EffectSegment, in rect: CGRect, alpha: Double, unit: CGFloat) -> CIImage {
+        let lw = max(1.5, CGFloat(e.strokeWidth) * unit)
+        let pad = lw * 4
+        let box = rect.insetBy(dx: -pad, dy: -pad).integral
+        let w = Int(box.width), h = Int(box.height)
+        guard w > 2, h > 2, w < 16384, h < 16384,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return .empty() }
+        let c = e.strokeColor
+        let color = CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: CGFloat(alpha))
+        ctx.setStrokeColor(color)
+        ctx.setFillColor(color)
+        ctx.setLineWidth(lw)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        // A soft shadow keeps it visible on any background.
+        ctx.setShadow(offset: CGSize(width: 0, height: -lw * 0.4), blur: lw * 1.2, color: CGColor(gray: 0, alpha: 0.35 * CGFloat(alpha)))
+        let r = CGRect(x: rect.minX - box.minX, y: rect.minY - box.minY, width: rect.width, height: rect.height)
+        switch e.shape {
+        case .box:
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: lw * 1.5, cornerHeight: lw * 1.5, transform: nil))
+            ctx.strokePath()
+        case .ellipse:
+            ctx.strokeEllipse(in: r)
+        case .arrow:
+            let (a, b) = e.arrowDirection.points // top-left unit square; Core Graphics is bottom-left
+            let tail = CGPoint(x: r.minX + a.x * r.width, y: r.maxY - a.y * r.height)
+            let tip = CGPoint(x: r.minX + b.x * r.width, y: r.maxY - b.y * r.height)
+            let angle = atan2(tip.y - tail.y, tip.x - tail.x)
+            let head = lw * 3.6
+            let base = CGPoint(x: tip.x - cos(angle) * head * 0.8, y: tip.y - sin(angle) * head * 0.8)
+            ctx.move(to: tail)
+            ctx.addLine(to: base)
+            ctx.strokePath()
+            ctx.move(to: tip)
+            ctx.addLine(to: CGPoint(x: tip.x - cos(angle - 0.45) * head, y: tip.y - sin(angle - 0.45) * head))
+            ctx.addLine(to: CGPoint(x: tip.x - cos(angle + 0.45) * head, y: tip.y - sin(angle + 0.45) * head))
+            ctx.closePath()
+            ctx.fillPath()
+        }
+        guard let cg = ctx.makeImage() else { return .empty() }
+        return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+    }
+
+    /// An image placed on the canvas: centred on textX/textY (top-left), with rounded corners and a shadow.
+    private func imageOverlay(_ source: CIImage, effect e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat) -> CIImage {
+        let ext = source.extent
+        guard ext.width > 0, ext.height > 0 else { return .empty() }
+        let w = CGFloat(e.imageWidth) * size.width
+        let k = w / ext.width
+        let h = ext.height * k
+        let x = CGFloat(e.textX) * size.width - w / 2
+        let y = (1 - CGFloat(e.textY)) * size.height - h / 2 - CGFloat(1 - alpha) * 16 * unit
+        let rect = CGRect(x: x, y: y, width: w, height: h)
+        var img = source.transformed(by: CGAffineTransform(translationX: -ext.minX, y: -ext.minY))
+            .transformed(by: CGAffineTransform(scaleX: k, y: k))
+            .transformed(by: CGAffineTransform(translationX: x, y: y))
+        let radius = CGFloat(e.imageCorner) * unit
+        if radius > 0.5 {
+            img = img.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: roundedRect(rect, radius: radius)])
+        }
+        if e.imageShadow {
+            let shadow = roundedRect(rect.offsetBy(dx: 0, dy: -8 * unit), radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+                .applyingGaussianBlur(sigma: Double(18 * unit))
+            img = img.composited(over: shadow)
+        }
+        return withAlpha(img, CGFloat(alpha))
     }
 
     private func spotlight(_ base: CIImage, hole: CGRect, dim: Double, canvas: CGRect, unit: CGFloat) -> CIImage {
@@ -432,7 +514,7 @@ final class FrameRenderer: @unchecked Sendable {
     }
 
     private func webcamOverlay(_ source: CIImage, style cs: CameraStyle, size: CGSize, unit: CGFloat, zoom: CGFloat,
-                               full: Double, hidden: Double) -> CIImage {
+                               full: Double, hidden: Double, move: (EffectSegment, Double)? = nil) -> CIImage {
         var cam = source
         let removeBackground = cs.background == .remove
         if cs.background != .none, let mask = segmenter.mask(for: cam) {
@@ -451,14 +533,24 @@ final class FrameRenderer: @unchecked Sendable {
             d *= CGFloat(lerp(1, 0.7, Double(min(1, max(0, zoom - 1))) * (1 - full)))
         }
         let margin = 0.04 * minDim
-        let bx: CGFloat, by: CGFloat
-        switch cs.corner {
-        case .topLeft: bx = margin; by = size.height - margin - d
-        case .topRight: bx = size.width - margin - d; by = size.height - margin - d
-        case .bottomLeft: bx = margin; by = margin
-        case .bottomRight: bx = size.width - margin - d; by = margin
+        func bubbleRect(_ corner: CameraCorner, _ d: CGFloat) -> CGRect {
+            let bx: CGFloat, by: CGFloat
+            switch corner {
+            case .topLeft: bx = margin; by = size.height - margin - d
+            case .topRight: bx = size.width - margin - d; by = size.height - margin - d
+            case .bottomLeft: bx = margin; by = margin
+            case .bottomRight: bx = size.width - margin - d; by = margin
+            }
+            return CGRect(x: bx, y: by, width: d, height: d)
         }
-        let bubble = CGRect(x: bx, y: by, width: d, height: d)
+        var bubble = bubbleRect(cs.corner, d)
+        if let (e, a) = move {
+            // Glide to the other corner and size, and back when the effect ends.
+            let to = bubbleRect(e.cameraCorner, CGFloat(e.cameraSize) * minDim)
+            let k = CGFloat(a)
+            bubble = CGRect(x: bubble.minX + (to.minX - bubble.minX) * k, y: bubble.minY + (to.minY - bubble.minY) * k,
+                            width: bubble.width + (to.width - bubble.width) * k, height: bubble.height + (to.height - bubble.height) * k)
+        }
         let f = CGFloat(full)
         var rect = CGRect(x: bubble.minX * (1 - f), y: bubble.minY * (1 - f),
                           width: bubble.width + (size.width - bubble.width) * f,

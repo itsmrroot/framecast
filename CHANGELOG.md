@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.0
+
+New editing tools, picked from what people ask Screen Studio for most.
+
+- **Images over the video:** add a logo, screenshot or sticker (+ Effect → Image). Drag it on the video to place it and drag its corner to resize. Rounded corners and a shadow are optional
+- **Arrows and shapes:** point at a button with an arrow (eight directions), or draw a box or circle around what matters. Pick a colour and thickness. They follow the zoom, like blur
+- **Move the camera after recording:** for any part of the video, the camera bubble glides to another corner and size, then back. Handy when it covers something
+- **Edit by transcript:** after generating captions, the scissors next to a line cuts that part out of the video
+- **Remove silent pauses:** Smart Speed → Cut Silent Pauses, or speed them up 4×
+- The split tool's pointer is now a pair of scissors
+
 ## 1.7.0
 
 **Timeline**

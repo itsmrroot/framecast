@@ -4,6 +4,7 @@ import CoreImage
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class EditorModel: ObservableObject {
@@ -244,12 +245,46 @@ final class EditorModel: ObservableObject {
         return p
     }
 
+    private var overlayCache: [String: CIImage] = [:]
+
+    /// Images used by image overlays, loaded once from the project's "overlays" folder.
+    private func overlayImages() -> [String: CIImage] {
+        var out: [String: CIImage] = [:]
+        for e in doc.effects where e.kind == .image && !e.imageFile.isEmpty {
+            if let hit = overlayCache[e.imageFile] { out[e.imageFile] = hit; continue }
+            let url = folder.appendingPathComponent("overlays", isDirectory: true).appendingPathComponent(e.imageFile)
+            if let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) {
+                overlayCache[e.imageFile] = img
+                out[e.imageFile] = img
+            }
+        }
+        return out
+    }
+
+    /// Copies an image into the project, so the project keeps working if the original moves. Returns its name.
+    func importOverlayImage(_ url: URL) -> String? {
+        let dir = folder.appendingPathComponent("overlays", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let name = "\(UUID().uuidString).\(url.pathExtension.lowercased().isEmpty ? "png" : url.pathExtension.lowercased())"
+        do { try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(name)) } catch { return nil }
+        return name
+    }
+
+    /// Asks for an image file; nil if cancelled.
+    func chooseOverlayImage() -> String? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .webP, .image]
+        panel.message = "Choose an image to show over the video"
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return importOverlayImage(url)
+    }
+
     func makeRenderModel(for built: BuiltComposition) -> RenderModel {
         RenderModel(style: doc.style, info: doc.info, editMap: editMap, zooms: doc.zooms,
                     cursorPath: cursorPath(), cursorTrack: cursorTrack, cursorImages: cursorImages,
                     screenTrackID: built.screenTrackID, webcamTrackID: doc.style.camera.visible ? built.webcamTrackID : nil,
                     effects: hiddenEffect.map { id in doc.effects.filter { $0.id != id } } ?? doc.effects,
-                    captions: doc.captions, keys: keys)
+                    captions: doc.captions, keys: keys, overlayImages: overlayImages())
     }
 
     private func previewVideoComposition(_ model: RenderModel, built: BuiltComposition) -> AVVideoComposition {
@@ -491,6 +526,16 @@ final class EditorModel: ObservableObject {
         let start = clamp(source ?? sourceTime, 0, max(0, sourceDuration - 0.5))
         let length = kind == .text ? 3.0 : (kind.needsCamera ? 4.0 : 3.0)
         var e = EffectSegment(kind: kind, start: start, end: min(sourceDuration, start + length))
+        if kind == .image {
+            guard let file = chooseOverlayImage() else { return }
+            e.imageFile = file
+        }
+        if kind == .cameraMove {
+            // Default to the opposite corner, a little bigger.
+            let corner = doc.style.camera.corner
+            e.cameraCorner = corner == .bottomRight ? .topLeft : (corner == .bottomLeft ? .topRight : (corner == .topLeft ? .bottomRight : .bottomLeft))
+            e.cameraSize = min(0.5, doc.style.camera.size * 1.4)
+        }
         if kind == .text, doc.effects.filter({ $0.kind == .text }).isEmpty { e.text = doc.name }
         // New titles match the look of the last one, so a video's titles stay consistent.
         if kind == .text, let last = doc.effects.last(where: { $0.kind == .text }) { e.titleStyle = last.titleStyle }
@@ -522,13 +567,14 @@ final class EditorModel: ObservableObject {
 
     // MARK: Smart speed
 
-    enum SmartSpeed { case idle, typing }
+    enum SmartSpeed { case idle, typing, silence }
 
     /// Finds quiet stretches (no cursor movement, clicks or keys) or bursts of typing.
     func smartRanges(_ kind: SmartSpeed) -> [(Double, Double)] {
         switch kind {
         case .idle: return ActivityAnalyzer.idleRanges(cursor: cursorTrack, keys: keys, duration: sourceDuration)
         case .typing: return ActivityAnalyzer.typingRanges(keys: keys)
+        case .silence: return ActivityAnalyzer.silentRanges(waveform: waveform, duration: sourceDuration)
         }
     }
 
@@ -549,6 +595,15 @@ final class EditorModel: ObservableObject {
     }
 
     /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    /// Removes a caption line's stretch of video (editing by transcript), and the line itself.
+    func cutCaption(_ id: UUID) {
+        guard let cue = doc.captions.first(where: { $0.id == id }) else { return }
+        edit(.timeline) { d in
+            d.clips = ClipOps.apply([(max(0, cue.start - 0.05), min(sourceDuration, cue.end + 0.05))], to: d.clips, speed: nil)
+            d.captions.removeAll { $0.id == id }
+        }
+    }
+
     func cut(at t: Double) {
         let minPiece = 0.15
         let hitsClip = doc.clips.contains { t > $0.start + minPiece && t < $0.end - minPiece }
