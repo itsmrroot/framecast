@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1
+
+- Fixed: the menu icons didn't show in the released app (apps built with the macOS 26 SDK get text-only menus unless they ask for icons)
+
 ## 1.13.0
 
 New tools from the most-requested features for screen recorders (Screen Studio's feedback board and reviews).
