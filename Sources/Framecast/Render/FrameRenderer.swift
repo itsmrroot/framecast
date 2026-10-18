@@ -182,6 +182,11 @@ final class FrameRenderer: @unchecked Sendable {
             }
         }
 
+        // Full-screen text slides cover everything drawn so far (intros, outros, section titles).
+        for (e, a) in active where e.kind == .slide {
+            out = textSlide(e, alpha: a, size: size, unit: L.unit, model: model, backdrop: out).composited(over: out)
+        }
+
         // Titles sit on the canvas, unaffected by the zoom.
         for (e, a) in active where e.kind == .text && !e.text.isEmpty {
             out = titleCard(e, alpha: a, size: size, unit: L.unit, backdrop: out).composited(over: out)
@@ -190,10 +195,18 @@ final class FrameRenderer: @unchecked Sendable {
         // Webcam (not affected by the camera zoom)
         if style.camera.visible, let camera, camera.extent.width > 0 {
             let full = model.amount(of: .cameraFull, at: t)
-            let hidden = model.amount(of: .cameraHidden, at: t)
+            // Full-screen text slides hide the camera too.
+            let hidden = max(model.amount(of: .cameraHidden, at: t), model.amount(of: .slide, at: t))
             if hidden < 0.999 {
+                var dodge = 0.0
+                if style.cameraAvoidCursor, style.showCursor, let cp = model.cursor, cp.hasData, full < 0.01 {
+                    // Where the cursor is on the canvas; the bubble fades when it goes behind it.
+                    let p = cp.state(at: t).position
+                    let pos = CGPoint(x: sr.minX + p.x * sr.width, y: sr.maxY - p.y * sr.height).applying(M)
+                    dodge = cameraDodge(cursor: pos, style: style.camera, size: size, move: model.cameraMove(at: t))
+                }
                 out = webcamOverlay(camera, style: style.camera, size: size, unit: L.unit, zoom: s,
-                                    full: full, hidden: hidden, move: model.cameraMove(at: t)).composited(over: out)
+                                    full: full, hidden: max(hidden, dodge * 0.85), move: model.cameraMove(at: t)).composited(over: out)
             }
         }
 
@@ -336,6 +349,57 @@ final class FrameRenderer: @unchecked Sendable {
         }
         guard let cg = ctx.makeImage() else { return .empty() }
         return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+    }
+
+    /// How much the camera should step aside (0…1) for a cursor at `cursor` (canvas coordinates): fully when the
+    /// cursor is over the bubble, easing off over a short distance around it.
+    private func cameraDodge(cursor: CGPoint, style cs: CameraStyle, size: CGSize, move: (EffectSegment, Double)?) -> Double {
+        let minDim = min(size.width, size.height)
+        var d = CGFloat(cs.size) * minDim
+        var corner = cs.corner
+        if let (e, a) = move, a > 0.5 { corner = e.cameraCorner; d = CGFloat(e.cameraSize) * minDim }
+        let m = 0.04 * minDim
+        let x: CGFloat = (corner == .topLeft || corner == .bottomLeft) ? m : size.width - m - d
+        let y: CGFloat = (corner == .bottomLeft || corner == .bottomRight) ? m : size.height - m - d
+        let rect = CGRect(x: x, y: y, width: d, height: d)
+        let dx = max(rect.minX - cursor.x, 0, cursor.x - rect.maxX)
+        let dy = max(rect.minY - cursor.y, 0, cursor.y - rect.maxY)
+        let dist = hypot(dx, dy)
+        let reach = 0.06 * minDim
+        return 1 - smootherstep(Double(dist / reach))
+    }
+
+    /// A full-screen text slide: a background (the project wallpaper, the blurred video, or a colour) with the
+    /// title and subtitle large and centred, in the effect's title style.
+    private func textSlide(_ e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat, model: RenderModel, backdrop: CIImage) -> CIImage {
+        let canvas = CGRect(origin: .zero, size: size)
+        var bg: CIImage
+        switch e.slideBackground {
+        case .wallpaper:
+            bg = model.background(size: size, ciContext: ciContext)
+        case .blur:
+            bg = backdrop.clampedToExtent().applyingGaussianBlur(sigma: Double(40 * unit))
+                .applyingFilter("CIColorControls", parameters: ["inputBrightness": -0.12, "inputSaturation": 1.2])
+        case .color:
+            let c = e.titleStyle.cardColor
+            bg = CIImage(color: CIColor(red: c.r, green: c.g, blue: c.b))
+        }
+        bg = bg.cropped(to: canvas)
+        var style = e.titleStyle
+        style.card = .none
+        if e.slideBackground == .color && style.textColor == nil { style.textColor = RGBA(hex: 0xFFFFFF) }
+        let title = text.title(e.text.isEmpty ? " " : e.text, subtitle: e.subtitle, style: style,
+                               fontSize: 96 * unit * CGFloat(e.textSize), maxWidth: size.width * 0.8)
+        let img = title.image
+        let x: CGFloat
+        switch style.align {
+        case .left: x = size.width * 0.1
+        case .center: x = (size.width - img.extent.width) / 2
+        case .right: x = size.width * 0.9 - img.extent.width
+        }
+        let y = (size.height - img.extent.height) / 2 - CGFloat(1 - alpha) * 20 * unit
+        let words = img.transformed(by: CGAffineTransform(translationX: x, y: y))
+        return withAlpha(words.composited(over: bg), CGFloat(alpha))
     }
 
     /// An image placed on the canvas: centred on textX/textY (top-left), with rounded corners and a shadow.

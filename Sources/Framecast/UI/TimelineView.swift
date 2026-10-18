@@ -17,6 +17,7 @@ struct TimelineView: View {
     /// Split-tool motion: each lane dips and springs back when the tool turns on/off or that lane is cut.
     @State private var laneKicks = [0, 0, 0]
     @State private var hoveredBlock: UUID?
+    @State private var freezeDragStart: Double?
     @State private var hoverY: CGFloat?
 
     /// Effects lane open: pointing at it, or (when not pointing at the timeline) an effect is selected.
@@ -190,13 +191,26 @@ struct TimelineView: View {
                 model.addZoom(at: model.sourceTime)
             }
             Menu {
-                ForEach(EffectKind.allCases) { kind in
-                    Button {
-                        model.addEffect(kind)
-                    } label: {
-                        Label(kind.label, systemImage: kind.icon)
+                Section("Slides") {
+                    Button { model.addSlide(.intro) } label: { Label("Intro Slide", systemImage: "rectangle.lefthalf.inset.filled") }
+                    Button { model.addSlide(.outro) } label: { Label("Outro Slide", systemImage: "rectangle.righthalf.inset.filled") }
+                    Button { model.addSlide(.here) } label: { Label("Text Slide at Playhead", systemImage: "rectangle.inset.filled") }
+                }
+                Section("At the playhead") {
+                    ForEach(EffectKind.allCases.filter { $0 != .slide }) { kind in
+                        Button {
+                            model.addEffect(kind)
+                        } label: {
+                            Label(kind.label, systemImage: kind.icon)
+                        }
+                        .disabled(kind.needsCamera && !model.doc.info.hasWebcam)
                     }
-                    .disabled(kind.needsCamera && !model.doc.info.hasWebcam)
+                    Button {
+                        if let f = model.insertFreezeFrame(at: model.sourceTime) { model.selection = .clip(f.id) }
+                    } label: { Label("Freeze Frame", systemImage: "snowflake") }
+                }
+                Section {
+                    Button { model.addChapter(at: model.sourceTime) } label: { Label("Chapter Marker", systemImage: "list.bullet.rectangle") }
                 }
             } label: {
                 Label("Effect", systemImage: "plus.square.on.square")
@@ -304,6 +318,14 @@ struct TimelineView: View {
                 ctx.fill(PinShape().path(in: pin.insetBy(dx: 0, dy: -2).offsetBy(dx: 0, dy: 2)), with: .color(Theme.clipPin))
                 ctx.draw(Image(systemName: "scissors").resizable(), in: CGRect(x: x - 5, y: 4, width: 10, height: 9))
             }
+            // Chapter markers: a white pin with the chapter's name.
+            for ch in model.doc.chapters where map.isKept(source: ch.time) || ch.time <= (map.segments.first?.srcStart ?? 0) {
+                let x = CGFloat(map.compTime(source: ch.time)) * pps
+                ctx.fill(Path(CGRect(x: x - 0.75, y: 2, width: 1.5, height: size.height - 2)), with: .color(Theme.text.opacity(0.8)))
+                ctx.fill(Path(roundedRect: CGRect(x: x, y: 1, width: 6, height: 9), cornerRadius: 1.5), with: .color(Theme.text.opacity(0.8)))
+                ctx.draw(Text(ch.title).font(.system(size: 9.5, weight: .semibold)).foregroundColor(Theme.text.opacity(0.85)),
+                         at: CGPoint(x: x + 9, y: 5.5), anchor: .leading)
+            }
             for f in model.doc.flags where map.isKept(source: f) {
                 let x = CGFloat(map.compTime(source: f)) * pps
                 var flag = Path()
@@ -398,10 +420,11 @@ struct TimelineView: View {
             .overlay {
                 if w > 60 {
                     VStack(spacing: 2) {
-                        Text("Clip").font(.system(size: 11, weight: .medium)).opacity(0.32)
+                        Text(c.freeze ? "Freeze" : "Clip").font(.system(size: 11, weight: .medium)).opacity(0.32)
                         HStack(spacing: 4) {
+                            if c.freeze { Image(systemName: "snowflake").font(.system(size: 10.5, weight: .semibold)) }
                             Text(Self.seconds((e - s) / c.speed)).font(.system(size: 12, weight: .semibold).monospacedDigit())
-                            if w > 110 {
+                            if w > 110 && !c.freeze {
                                 Image(systemName: "gauge.with.dots.needle.33percent").font(.system(size: 10.5, weight: .semibold))
                                 Text("\(c.speed, specifier: "%g")×").font(.system(size: 12, weight: .semibold))
                             }
@@ -424,12 +447,19 @@ struct TimelineView: View {
                     model.seek(source: t)
                 }
             })
-            .overlay(alignment: .leading) { edgeHandle(color: Theme.clip, visible: selected) { dx, ended in
+            .overlay(alignment: .leading) { if !c.freeze { edgeHandle(color: Theme.clip, visible: selected) { dx, ended in
                 let b = model.clipBounds(c.id)
                 let ns = clamp(c.start + Double(dx / pps) * c.speed, b.lowerBound, c.end - 0.3)
                 if ended { drag = nil; model.setClip(c.id, start: ns) } else { drag = DragState(id: c.id, kind: .clipLeft, start: ns, end: c.end) }
-            } }
+            } } }
             .overlay(alignment: .trailing) { edgeHandle(color: Theme.clip, visible: selected) { dx, ended in
+                // A freeze frame's right edge sets how long it holds.
+                if c.freeze {
+                    if freezeDragStart == nil { freezeDragStart = c.holdSeconds }
+                    model.setFreezeLength(c.id, seconds: clamp((freezeDragStart ?? c.holdSeconds) + Double(dx / pps), 0.2, 30))
+                    if ended { freezeDragStart = nil }
+                    return
+                }
                 let b = model.clipBounds(c.id)
                 let ne = clamp(c.end + Double(dx / pps) * c.speed, c.start + 0.3, b.upperBound)
                 if ended { drag = nil; model.setClip(c.id, end: ne) } else { drag = DragState(id: c.id, kind: .clipRight, start: c.start, end: ne) }
@@ -664,6 +694,7 @@ struct TimelineView: View {
         case .spotlight: return Color(red: 0.95, green: 0.78, blue: 0.25)
         case .text: return Color(red: 0.93, green: 0.48, blue: 0.72)
         case .image: return Color(red: 0.55, green: 0.45, blue: 0.95)
+        case .slide: return Color(red: 0.32, green: 0.62, blue: 0.95)
         case .annotation: return Color(red: 0.98, green: 0.45, blue: 0.3)
         case .cameraMove: return Color(red: 0.35, green: 0.8, blue: 0.5)
         case .hideCursor: return Color(red: 0.6, green: 0.6, blue: 0.66)
@@ -679,6 +710,7 @@ struct TimelineView: View {
         case .blur, .spotlight: return (c(0x792F49), c(0x8B3955))
         case .text: return (c(0x7A3166), c(0x8E3D78))
         case .image: return (c(0x3E2F86), c(0x4F3EA0))
+        case .slide: return (c(0x1F4F86), c(0x2A63A0))
         case .annotation: return (c(0x7A3A1C), c(0x8E4724))
         case .hideCursor: return (c(0x3A3A44), c(0x484853))
         case .cameraFull, .cameraHidden, .cameraMove: return (c(0x1F5A3A), c(0x286B46))

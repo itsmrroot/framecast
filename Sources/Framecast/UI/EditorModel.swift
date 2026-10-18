@@ -18,6 +18,7 @@ final class EditorModel: ObservableObject {
         var style: Style
         var effects: [EffectSegment]
         var captions: [CaptionCue]
+        var chapters: [Chapter]
     }
 
     let folder: URL
@@ -185,6 +186,7 @@ final class EditorModel: ObservableObject {
         doc.style = s.style
         doc.effects = s.effects
         doc.captions = s.captions
+        doc.chapters = s.chapters
         lastCoalesceKey = nil
         if case .zoom(let id) = selection, !doc.zooms.contains(where: { $0.id == id }) { selection = .none }
         if case .clip(let id) = selection, !doc.clips.contains(where: { $0.id == id }) { selection = .none }
@@ -665,6 +667,91 @@ final class EditorModel: ObservableObject {
     }
 
     /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    // MARK: - Freeze frames, slides, chapters
+
+    /// Holds the frame at `t` (source time) still for `seconds`, splitting the clip around it. Returns the freeze clip.
+    @discardableResult
+    func insertFreezeFrame(at t: Double, seconds: Double = 2) -> Clip? {
+        guard let i = doc.clips.firstIndex(where: { !$0.freeze && t >= $0.start - 0.001 && t < $0.end }) else { NSSound.beep(); return nil }
+        let c = doc.clips[i]
+        let at = max(c.start, min(t, c.end - Clip.freezeSliver))
+        var freeze = Clip.freezeFrame(at: at, seconds: seconds)
+        freeze.end = min(freeze.end, c.end)
+        var pieces: [Clip] = []
+        if at - c.start > 0.05 { var a = c; a.end = at; pieces.append(a) }
+        pieces.append(freeze)
+        if c.end - freeze.end > 0.05 { var b = c; b.id = UUID(); b.start = freeze.end; pieces.append(b) }
+        edit(.timeline) { d in
+            if let j = d.clips.firstIndex(where: { $0.id == c.id }) { d.clips.replaceSubrange(j...j, with: pieces) }
+        }
+        return freeze
+    }
+
+    func setFreezeLength(_ id: UUID, seconds: Double) {
+        edit(.timeline, coalesce: "freeze-\(id)") { d in
+            guard let i = d.clips.firstIndex(where: { $0.id == id && $0.freeze }) else { return }
+            d.clips[i].speed = d.clips[i].duration / max(0.2, seconds)
+        }
+    }
+
+    enum SlidePlace { case intro, outro, here }
+
+    /// A full-screen text slide. Intro and outro add time: they hold the first or last frame still behind the slide.
+    func addSlide(_ place: SlidePlace) {
+        let sorted = doc.clips.filter { !$0.freeze }.sorted { $0.start < $1.start }
+        guard let first = sorted.first, let last = sorted.last else { return }
+        var e = EffectSegment(kind: .slide, start: 0, end: 0)
+        e.textSize = 1
+        if let lastTitle = doc.effects.last(where: { $0.kind == .slide || $0.kind == .text }) { e.titleStyle = lastTitle.titleStyle }
+        switch place {
+        case .intro:
+            guard let f = insertFreezeFrame(at: first.start, seconds: 3) else { return }
+            e.start = f.start; e.end = f.end
+            e.text = doc.name
+        case .outro:
+            guard let f = insertFreezeFrame(at: max(last.start, last.end - Clip.freezeSliver), seconds: 3) else { return }
+            e.start = f.start; e.end = f.end
+            e.text = "Thanks for watching"
+        case .here:
+            e.start = sourceTime; e.end = min(sourceDuration, sourceTime + 3)
+            e.text = "Next up"
+        }
+        edit(.render) { $0.effects.append(e) }
+        selection = .effect(e.id)
+        player.pause()
+        seek(comp: editMap.compTime(source: e.start) + 0.6)
+    }
+
+    func addChapter(at t: Double, title: String? = nil) {
+        let n = doc.chapters.count + 1
+        let ch = Chapter(time: t, title: title ?? "Chapter \(n)")
+        edit(.meta) { $0.chapters.append(ch); $0.chapters.sort { $0.time < $1.time } }
+    }
+
+    func updateChapter(_ id: UUID, title: String) {
+        edit(.meta, coalesce: "chapter-\(id)") { d in
+            if let i = d.chapters.firstIndex(where: { $0.id == id }) { d.chapters[i].title = title }
+        }
+    }
+
+    func deleteChapter(_ id: UUID) {
+        edit(.meta) { $0.chapters.removeAll { $0.id == id } }
+    }
+
+    /// Chapters as YouTube wants them in a description: "0:00 Intro" lines in edited time, starting at 0:00.
+    func youTubeChapters() -> String {
+        var lines: [(Double, String)] = doc.chapters
+            .filter { editMap.isKept(source: $0.time) || $0.time <= (editMap.segments.first?.srcStart ?? 0) }
+            .map { (editMap.compTime(source: $0.time), $0.title) }
+            .sorted { $0.0 < $1.0 }
+        if lines.first.map({ $0.0 > 0.5 }) ?? true { lines.insert((0, "Intro"), at: 0) } else { lines[0].0 = 0 }
+        return lines.map { t, title in
+            let s = Int(t.rounded(.down))
+            let stamp = s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+            return "\(stamp) \(title)"
+        }.joined(separator: "\n")
+    }
+
     /// A short message over the preview ("No silent pauses found").
     @Published private(set) var notice: String?
     private var noticeTask: Task<Void, Never>?
@@ -959,7 +1046,7 @@ final class EditorModel: ObservableObject {
 
 private extension EditorModel.Snapshot {
     init(_ d: ProjectDocument) {
-        self.init(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style, effects: d.effects, captions: d.captions)
+        self.init(name: d.name, clips: d.clips, zooms: d.zooms, style: d.style, effects: d.effects, captions: d.captions, chapters: d.chapters)
     }
 }
 

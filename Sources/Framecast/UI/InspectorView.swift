@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case background, cursor, zoom, animation, camera, audio, captions
+    case background, cursor, zoom, animation, camera, audio, captions, chapters
     var id: String { rawValue }
     /// ⌘1… shortcut number.
     var number: Int { (InspectorTab.allCases.firstIndex(of: self) ?? 0) + 1 }
@@ -17,6 +17,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .animation: return "wand.and.rays"
         case .audio: return "speaker.wave.2"
         case .captions: return "captions.bubble"
+        case .chapters: return "list.bullet.rectangle"
         }
     }
 }
@@ -51,6 +52,7 @@ struct InspectorView: View {
                         case .animation: AnimationTab(model: model)
                         case .audio: AudioTab(model: model)
                         case .captions: CaptionsTab(model: model)
+                        case .chapters: ChaptersTab(model: model)
                         }
                     }
                     .padding(16)
@@ -738,9 +740,16 @@ private struct ClipDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DetailHeader(title: "Clip", icon: "film", color: Theme.clip) { model.selection = .none }
+            DetailHeader(title: clip.freeze ? "Freeze frame" : "Clip", icon: clip.freeze ? "snowflake" : "film", color: Theme.clip) { model.selection = .none }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if clip.freeze {
+                        LabeledSlider(label: "Hold for", value: Binding(get: { clip.holdSeconds }, set: { model.setFreezeLength(clip.id, seconds: $0) }),
+                                      range: 0.5...10, format: { String(format: "%.1fs", $0) })
+                        Text("The picture holds still here, silently. Great for giving viewers time to read, or behind an intro or outro slide.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+                        WideButton(title: "Remove freeze frame", icon: "trash", destructive: true) { model.deleteSelection() }
+                    } else {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Speed").font(.system(size: 12))
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
@@ -772,6 +781,10 @@ private struct ClipDetail: View {
                         row("Length in video", String(format: "%.1fs", clip.duration / clip.speed))
                     }
                     WideButton(title: "Cut at playhead", icon: "scissors") { model.splitAtPlayhead() }
+                    WideButton(title: "Freeze frame at playhead", icon: "snowflake") {
+                        if let f = model.insertFreezeFrame(at: model.sourceTime) { model.selection = .clip(f.id) }
+                    }
+                    }
                     Divider().padding(.vertical, 4)
                     WideButton(title: "Remove clip", icon: "trash", destructive: true) { model.deleteSelection() }
                         .disabled(model.doc.clips.count < 2)
@@ -845,6 +858,7 @@ private struct CameraTab: View {
                 positionGrid
                 ToggleRow(label: "Mirror", isOn: model.styleBinding(\.camera.mirror, key: "camMirror"))
                 ToggleRow(label: "Shrink while zoomed", isOn: model.styleBinding(\.camera.shrinkOnZoom, key: "camShrink"))
+                ToggleRow(label: "Fade out when the cursor goes behind it", isOn: model.styleBinding(\.cameraAvoidCursor, key: "camAvoid"))
                 ToggleRow(label: "Border", isOn: model.styleBinding(\.camera.border, key: "camBorder"))
             }
         }
@@ -972,6 +986,27 @@ private struct EffectDetail: View {
                         }
                         LabeledSlider(label: "Size", value: binding(\.textSize, key: "tsize"), range: 0.5...2,
                                       format: { String(format: "%.1f×", $0) })
+                    case .slide:
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Text").font(.system(size: 12))
+                            TextField("Title", text: binding(\.text, key: "text"), axis: .vertical)
+                                .textFieldStyle(.roundedBorder).lineLimit(1...4)
+                            TextField("Subtitle (optional)", text: binding(\.subtitle, key: "subtitle"), axis: .vertical)
+                                .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Background").font(.system(size: 12))
+                            PillPicker(options: SlideBackground.allCases, selection: binding(\.slideBackground, key: "sbg", coalesce: false), label: \.label)
+                            if effect.slideBackground == .color {
+                                SwatchRow(colors: TitleStyle.palette, selection: effect.titleStyle.cardColor, allowsAuto: false) { c in
+                                    if let c { model.updateEffect(effect.id) { $0.titleStyle.cardColor = c } }
+                                }
+                            }
+                        }
+                        LabeledSlider(label: "Size", value: binding(\.textSize, key: "tsize"), range: 0.5...2,
+                                      format: { String(format: "%.1f×", $0) })
+                        TitleStyleEditor(style: binding(\.titleStyle, key: "tstyle", coalesce: false), showsCard: false)
+                        note("A full-screen card for intros, outros and new sections. Intro and outro slides hold the first or last frame still, so they add time instead of covering your recording.")
                     case .image:
                         ImageOverlayThumb(model: model, file: effect.imageFile)
                         Button {
@@ -1301,5 +1336,77 @@ private struct ImageOverlayThumb: View {
         }
         .frame(maxWidth: .infinity).frame(height: 110)
         .background(RoundedRectangle(cornerRadius: 9).fill(Theme.fill.opacity(0.05)))
+    }
+}
+
+// MARK: - Chapters
+
+/// Named moments in the video, copied as a YouTube chapter list.
+private struct ChaptersTab: View {
+    @ObservedObject var model: EditorModel
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Chapters")
+            Text("Mark where each part of your video starts. Paste the list into a YouTube description to get chapters.")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+            Button { model.addChapter(at: model.sourceTime) } label: {
+                Label("Add Chapter at Playhead", systemImage: "plus").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            if model.doc.chapters.isEmpty && !model.doc.flags.isEmpty {
+                Button {
+                    for (i, f) in model.doc.flags.sorted().enumerated() { model.addChapter(at: f, title: "Chapter \(i + 1)") }
+                } label: {
+                    Label("Use the \(model.doc.flags.count) flag\(model.doc.flags.count == 1 ? "" : "s") you marked while recording", systemImage: "flag")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+            ForEach(model.doc.chapters.sorted { $0.time < $1.time }) { ch in
+                ChapterRow(model: model, chapter: ch)
+            }
+            if !model.doc.chapters.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(model.youTubeChapters(), forType: .string)
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy YouTube Chapters", systemImage: copied ? "checkmark" : "doc.on.doc").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                Text(model.youTubeChapters())
+                    .font(.system(size: 11).monospaced()).foregroundStyle(Theme.textDim)
+                    .textSelection(.enabled)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill.opacity(0.05)))
+            }
+        }
+        .onChange(of: model.doc.chapters) { _, _ in copied = false }
+    }
+}
+
+private struct ChapterRow: View {
+    @ObservedObject var model: EditorModel
+    let chapter: Chapter
+    @State private var title = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { model.seek(source: chapter.time) } label: {
+                Text(formatTime(model.editMap.compTime(source: chapter.time), fraction: false))
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.accent).frame(width: 40, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("Go to this chapter")
+            TextField("Chapter title", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: title) { _, v in if v != chapter.title { model.updateChapter(chapter.id, title: v) } }
+            Button { model.deleteChapter(chapter.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                .buttonStyle(.plain).foregroundStyle(Theme.textFaint)
+                .accessibilityLabel("Delete chapter")
+        }
+        .onAppear { title = chapter.title }
     }
 }

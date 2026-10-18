@@ -165,6 +165,8 @@ enum CompositionBuilder {
                 (micTrack, assets.mic, assets.micDuration),
             ]
             for (track, source, limit) in entries {
+                // A freeze frame holds the picture; its sound would be a stretched blip, so it stays silent.
+                if seg.freeze && (track === sysTrack || track === micTrack) { continue }
                 guard let inserted = insert(track, from: source, limit: limit, srcStart: seg.srcStart, srcEnd: seg.srcEnd, at: cursor) else { continue }
                 if abs(seg.speed - 1) > 0.001, let track {
                     let scaled = CMTimeMultiplyByFloat64(inserted, multiplier: 1 / seg.speed)

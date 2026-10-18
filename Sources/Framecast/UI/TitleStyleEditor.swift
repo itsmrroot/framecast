@@ -4,6 +4,8 @@ import AppKit
 /// Look, typeface, weight, alignment, colours and background for a title.
 struct TitleStyleEditor: View {
     @Binding var style: TitleStyle
+    /// Text slides have their own background, so they hide the card choice.
+    var showsCard = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -57,7 +59,7 @@ struct TitleStyleEditor: View {
                 SwatchRow(colors: TitleStyle.palette, selection: style.textColor, allowsAuto: true) { style.textColor = $0 }
             }
 
-            section("Background") {
+            if showsCard { section("Background") {
                 PillPicker(options: TitleCard.allCases, selection: $style.card, label: \.label)
                 if style.card == .color {
                     SwatchRow(colors: TitleStyle.palette, selection: style.cardColor, allowsAuto: false) { c in
@@ -66,7 +68,7 @@ struct TitleStyleEditor: View {
                 }
                 Text(cardHint).font(.system(size: 11)).foregroundStyle(Theme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
-            }
+            } }
         }
     }
 

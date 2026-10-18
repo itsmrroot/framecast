@@ -107,6 +107,9 @@ enum SelfTest {
         check(quiet.count == 1 && abs(quiet[0].0 - 3.2) < 0.01 && abs(quiet[0].1 - 5.8) < 0.01, "silent pause found and trimmed (\(quiet))")
         let fx = try? JSONDecoder().decode(EffectSegment.self, from: Data(#"{"kind":"annotation","start":0,"end":2,"shape":"spiral"}"#.utf8))
         check(fx?.shape == .arrow && fx?.strokeWidth == 6, "arrow: unknown shape falls back, defaults kept")
+        let held = EditMap(clips: [Clip.freezeFrame(at: 0, seconds: 2), Clip(start: Clip.freezeSliver, end: 3)])
+        check(abs(held.duration - (2 + 3 - Clip.freezeSliver)) < 0.001 && held.segments.first?.freeze == true,
+              "freeze frame adds its hold time (\(String(format: "%.2f", held.duration))s)")
         let map = EditMap(clips: [Clip(start: 0, end: 2), Clip(start: 5, end: 7, speed: 2)])
         check(abs(map.duration - 3) < 0.0001 && abs(map.compTime(source: 6) - 2.5) < 0.0001 && abs(map.compTime(source: 3) - 2) < 0.0001,
               "edited time closes cuts and applies speed")
@@ -190,7 +193,10 @@ enum SelfTest {
         blur.x = 0.55; blur.y = 0.08; blur.w = 0.35; blur.h = 0.22
         var spot = EffectSegment(kind: .spotlight, start: 6.5, end: 8.5)
         spot.x = 0.1; spot.y = 0.45; spot.w = 0.4; spot.h = 0.3
-        let effects = [title, blur, spot,
+        // An intro: a text slide over a 1.5 s freeze of the first frame.
+        var slide = EffectSegment(kind: .slide, start: 0, end: Clip.freezeSliver)
+        slide.text = "Intro slide"; slide.subtitle = "Freeze frame behind it"; slide.slideBackground = .color
+        let effects = [slide, title, blur, spot,
                        EffectSegment(kind: .hideCursor, start: 4.0, end: 5.2),
                        EffectSegment(kind: .cameraFull, start: duration * 0.72, end: duration * 0.93)]
         let captions = [CaptionCue(start: 0.4, end: 3.0, text: "Welcome to Framecast, the screen recorder for your Mac."),
@@ -199,9 +205,12 @@ enum SelfTest {
                             KeyEvent(t: 3.4, label: "h", isShortcut: false), KeyEvent(t: 3.6, label: "i", isShortcut: false),
                             KeyEvent(t: 3.8, label: "!", isShortcut: false)], folder: folder)
         let doc = ProjectDocument(name: "Self Test", createdAt: Date(), info: info,
-                                  clips: [Clip(start: 0, end: duration * 0.6, speed: 1), Clip(start: duration * 0.7, end: duration, speed: 2)],
+                                  clips: [Clip.freezeFrame(at: 0, seconds: 1.5),
+                                          Clip(start: Clip.freezeSliver, end: duration * 0.6, speed: 1), Clip(start: duration * 0.7, end: duration, speed: 2)],
                                   zooms: zooms, style: style, effects: effects, captions: captions)
-        ProjectIO.save(doc, folder: folder)
+        var docWithChapters = doc
+        docWithChapters.chapters = [Chapter(time: 0, title: "Intro"), Chapter(time: duration * 0.75, title: "Second part")]
+        ProjectIO.save(docWithChapters, folder: folder)
         let reloaded = try ProjectIO.load(folder: folder)
         print("round-trip: \(reloaded.effects.count) effects, \(reloaded.captions.count) captions")
         let idle = ActivityAnalyzer.idleRanges(cursor: cursor, keys: [], duration: duration)

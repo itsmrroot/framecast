@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.13.0
+
+New tools from the most-requested features for screen recorders (Screen Studio's feedback board and reviews).
+
+- **Text slides:** full-screen title cards for intros, outros and new sections (Effect → Slides). Pick the wallpaper, the blurred video or a colour behind them, and style the text like titles
+- **Intro and outro slides add time:** they hold the first or last frame still behind the slide instead of covering your recording
+- **Freeze frame:** hold any moment still (Effect → Freeze Frame, or in the clip editor), silently, for as long as you like. Drag its right edge or use the slider to change how long
+- **Chapters:** mark where each part starts (Chapters panel or Effect → Chapter Marker), see them on the ruler, and copy a ready-to-paste YouTube chapter list. Flags you marked while recording can become chapters in one click
+- **Camera steps aside:** the camera bubble fades when the cursor goes behind it, so it never hides what you're clicking (Camera panel)
+- The camera hides during full-screen slides
+- Fixed: dragging a title or image on the video lagged behind the pointer
+
 ## 1.12.1
 
 - Fixed: dragging a title or an image on the video lagged behind the pointer. It now stays exactly under it

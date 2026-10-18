@@ -61,7 +61,53 @@ struct Clip: Codable, Identifiable, Equatable {
     var start: Double
     var end: Double
     var speed: Double = 1
+    /// A freeze frame: a sliver of footage held still (its speed is how long it's held).
+    var freeze = false
     var duration: Double { end - start }
+
+    /// Length of a freeze clip's footage sliver.
+    static let freezeSliver = 1.0 / 30
+
+    init(id: UUID = UUID(), start: Double, end: Double, speed: Double = 1, freeze: Bool = false) {
+        self.id = id; self.start = start; self.end = end; self.speed = speed; self.freeze = freeze
+    }
+
+    /// A freeze frame at `t` (source time), held for `seconds`.
+    static func freezeFrame(at t: Double, seconds: Double) -> Clip {
+        Clip(start: t, end: t + freezeSliver, speed: freezeSliver / max(0.2, seconds), freeze: true)
+    }
+
+    /// How long a freeze clip is held, in seconds.
+    var holdSeconds: Double { duration / max(speed, 0.0001) }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
+        freeze = try c.decodeIfPresent(Bool.self, forKey: .freeze) ?? false
+    }
+}
+
+/// A named moment in the video (source time), exported as YouTube-style chapters.
+struct Chapter: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var time: Double
+    var title: String
+}
+
+/// What's behind a full-screen text slide.
+enum SlideBackground: String, Codable, CaseIterable, Identifiable {
+    case wallpaper, blur, color
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .wallpaper: return "Wallpaper"
+        case .blur: return "Blurred video"
+        case .color: return "Color"
+        }
+    }
 }
 
 enum ZoomMode: String, Codable, CaseIterable, Identifiable {
@@ -105,7 +151,7 @@ struct ZoomSegment: Codable, Identifiable, Equatable {
 }
 
 enum EffectKind: String, Codable, CaseIterable, Identifiable {
-    case blur, spotlight, text, image, annotation, hideCursor, cameraFull, cameraHidden, cameraMove
+    case blur, spotlight, text, slide, image, annotation, hideCursor, cameraFull, cameraHidden, cameraMove
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -113,6 +159,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .spotlight: return "Spotlight"
         case .text: return "Text"
         case .image: return "Image"
+        case .slide: return "Text slide"
         case .annotation: return "Arrow or shape"
         case .cameraMove: return "Move camera"
         case .hideCursor: return "Hide cursor"
@@ -126,6 +173,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .spotlight: return "flashlight.on.fill"
         case .text: return "textformat"
         case .image: return "photo"
+        case .slide: return "rectangle.inset.filled"
         case .annotation: return "arrow.up.right"
         case .cameraMove: return "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left"
         case .hideCursor: return "cursorarrow.slash"
@@ -338,6 +386,8 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     /// "Move camera": where the camera bubble goes, and its size, for this part.
     var cameraCorner: CameraCorner = .topRight
     var cameraSize: Double = 0.3
+    /// Text slide: what fills the screen behind the words.
+    var slideBackground: SlideBackground = .wallpaper
     /// Kept on the timeline but not rendered.
     var disabled = false
     var duration: Double { end - start }
@@ -383,6 +433,7 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         strokeWidth = (try? c.decodeIfPresent(Double.self, forKey: .strokeWidth)) ?? 6
         cameraCorner = (try? c.decodeIfPresent(CameraCorner.self, forKey: .cameraCorner)) ?? .topRight
         cameraSize = (try? c.decodeIfPresent(Double.self, forKey: .cameraSize)) ?? 0.3
+        slideBackground = (try? c.decodeIfPresent(SlideBackground.self, forKey: .slideBackground)) ?? .wallpaper
     }
 }
 
@@ -610,6 +661,8 @@ struct Style: Codable, Equatable {
     var crop: CropRect? = nil
 
     var showCursor = true
+    /// Fade the camera bubble out of the way when the cursor goes behind it.
+    var cameraAvoidCursor = true
     var cursorSize: Double = 1.6
     var cursorSmoothing: Double = 0.55
     var highResCursor = true
@@ -672,6 +725,7 @@ struct ProjectDocument: Codable {
     var flags: [Double] = []
     /// What this recording is for (typed before or after recording).
     var notes: String = ""
+    var chapters: [Chapter] = []
 
     init(name: String, createdAt: Date, info: RecordingInfo, clips: [Clip], zooms: [ZoomSegment], style: Style,
          effects: [EffectSegment] = [], captions: [CaptionCue] = []) {
@@ -700,6 +754,7 @@ struct ProjectDocument: Codable {
         captions = try c.decodeIfPresent([CaptionCue].self, forKey: .captions) ?? []
         flags = try c.decodeIfPresent([Double].self, forKey: .flags) ?? []
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        chapters = (try? c.decodeIfPresent([Chapter].self, forKey: .chapters)) ?? []
     }
 }
 

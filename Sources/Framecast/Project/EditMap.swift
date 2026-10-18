@@ -7,6 +7,7 @@ struct EditMap {
         var srcEnd: Double
         var speed: Double
         var compStart: Double
+        var freeze = false
         var compDuration: Double { (srcEnd - srcStart) / speed }
         var compEnd: Double { compStart + compDuration }
     }
@@ -17,8 +18,10 @@ struct EditMap {
     init(clips: [Clip]) {
         var t = 0.0
         var segs: [Segment] = []
-        for c in clips.sorted(by: { $0.start < $1.start }) where c.end - c.start > 0.01 {
-            let s = Segment(srcStart: c.start, srcEnd: c.end, speed: max(0.1, c.speed), compStart: t)
+        // A freeze frame shares its start with the clip that follows it, so it sorts first.
+        for c in clips.sorted(by: { $0.start != $1.start ? $0.start < $1.start : ($0.freeze && !$1.freeze) }) where c.end - c.start > 0.01 {
+            let s = Segment(srcStart: c.start, srcEnd: c.end, speed: c.freeze ? max(0.0005, c.speed) : max(0.1, c.speed),
+                            compStart: t, freeze: c.freeze)
             segs.append(s)
             t += s.compDuration
         }
