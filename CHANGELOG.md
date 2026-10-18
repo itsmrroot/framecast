@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.15.3
+
+- Fixed: some places in macOS (Storage settings, the screen-sharing panel) still showed Framecast's first icon. The icon file now has a new name, so macOS picks up the current one
+
 ## 1.15.2
 
 The editor works more like a video editor.

@@ -45,7 +45,8 @@ if [ ! -f Resources/AppIcon.icns ]; then
   iconutil -c icns "$ICONSET" -o Resources/AppIcon.icns
   rm -rf "$TMP"
 fi
-cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# A new file name inside the app makes macOS fetch the icon fresh instead of showing a cached old one.
+cp Resources/AppIcon.icns "$APP/Contents/Resources/FramecastIcon.icns"
 
 # Sign with a stable identity when available so macOS remembers privacy permissions between builds.
 IDENTITY="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')}"

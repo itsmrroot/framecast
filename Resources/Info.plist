@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Framecast</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>FramecastIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.framecast.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.15.2</string>
+	<string>1.15.3</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSApplicationCategoryType</key>
