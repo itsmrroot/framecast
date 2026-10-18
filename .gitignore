@@ -10,3 +10,6 @@ docs/screen-studio/
 docs/screen-studio-comparison.md
 docs/qa/
 docs/qa-report.md
+
+# Notes from other tools that land in this folder (not part of Framecast)
+netmgr-diag/
