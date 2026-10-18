@@ -149,8 +149,40 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             guard let self, let window = self.window, window.isKeyWindow, window.attachedSheet == nil, !self.ui.showExport else { return event }
             // Let text fields handle their own typing.
             if window.firstResponder is NSTextView { return event }
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if !mods.subtracting([.function, .numericPad, .capsLock]).isEmpty { return event }
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.function, .numericPad, .capsLock])
+            let m = self.model
+            // Shortcuts with modifiers (editing like a video editor).
+            switch (Int(event.keyCode), mods) {
+            case (kVK_ANSI_C, [.command]):
+                if case .none = m.selection { return event }
+                if case .clip = m.selection { return event }
+                m.copySelection(); return nil
+            case (kVK_ANSI_V, [.command]):
+                m.paste(); return nil
+            case (kVK_ANSI_D, [.command]):
+                m.duplicateSelection(); return nil
+            case (kVK_ANSI_LeftBracket, [.option]):
+                m.trimToPlayhead(start: true); return nil
+            case (kVK_ANSI_RightBracket, [.option]):
+                m.trimToPlayhead(start: false); return nil
+            case (kVK_LeftArrow, [.option]):
+                m.nudgeSelection(by: -0.1); return nil
+            case (kVK_RightArrow, [.option]):
+                m.nudgeSelection(by: 0.1); return nil
+            case (kVK_LeftArrow, [.option, .shift]):
+                m.nudgeSelection(by: -1); return nil
+            case (kVK_RightArrow, [.option, .shift]):
+                m.nudgeSelection(by: 1); return nil
+            case (kVK_ANSI_Equal, [.command]):
+                m.timelineZoom = min(24, m.timelineZoom * 1.5); return nil
+            case (kVK_ANSI_Minus, [.command]):
+                m.timelineZoom = max(1, m.timelineZoom / 1.5); return nil
+            case (kVK_ANSI_Z, [.shift]):
+                m.timelineZoom = 1; return nil
+            default:
+                break
+            }
+            if !mods.isEmpty { return event }
             switch Int(event.keyCode) {
             case kVK_Space:
                 self.model.togglePlay(); return nil
@@ -185,6 +217,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 return nil
             case kVK_Home:
                 self.model.seek(comp: 0); return nil
+            case kVK_End:
+                self.model.seek(comp: self.model.duration); return nil
+            case kVK_UpArrow:
+                self.model.jumpToEditPoint(forward: false); return nil
+            case kVK_DownArrow:
+                self.model.jumpToEditPoint(forward: true); return nil
+            case kVK_ANSI_N:
+                self.model.snapping.toggle()
+                self.model.notify(self.model.snapping ? "Snapping on" : "Snapping off")
+                return nil
             default:
                 return event
             }

@@ -217,6 +217,20 @@ enum SelfTest {
                                  pixelWidth: Int(size.width), pixelHeight: Int(size.height),
                                  hasWebcam: true, hasMic: false, hasSystemAudio: false, sourceName: "Self test", hasCursorData: true)
         var style = Style()
+        // Background music: a 2 s tone, shorter than the video, so it has to loop.
+        do {
+            let dir = folder.appendingPathComponent("music", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+            let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 88_200)!
+            buf.frameLength = 88_200
+            for i in 0..<88_200 { buf.floatChannelData![0][i] = Float(0.3 * sin(2 * .pi * 523 * Double(i) / 44_100)) }
+            let f = try AVAudioFile(forWriting: dir.appendingPathComponent("tone.m4a"),
+                                    settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100, AVNumberOfChannelsKey: 1],
+                                    commonFormat: .pcmFormatFloat32, interleaved: false)
+            try f.write(from: buf)
+        }
+        style.musicFile = "tone.m4a"
         style.keystrokes = .all
         style.camera.background = .blur
         // Exercise the newer render options.
@@ -274,6 +288,11 @@ enum SelfTest {
         let start = Date()
         try await exporter.export(job: job, settings: settings, to: mp4) { _ in }
         print(String(format: "mp4 exported in %.1fs", Date().timeIntervalSince(start)))
+        if let music = job.built.composition.track(withTrackID: CompositionBuilder.musicID) {
+            print(String(format: "music track: %.1fs (video %.1fs)", music.timeRange.duration.seconds, job.built.duration.seconds))
+        } else {
+            print("music track: MISSING")
+        }
         print("srt:\n\(model.srt())")
         print("webcam track: \(String(describing: job.model.webcamTrackID)), comp video tracks: \(job.built.composition.tracks(withMediaType: .video).count)")
         // Direct overlay render with a synthetic camera frame.

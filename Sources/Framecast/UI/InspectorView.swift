@@ -945,6 +945,32 @@ private struct AudioTab: View {
             }
             Text("Sped-up clips keep their natural pitch.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+
+            SectionHeader(title: "Background music")
+            if model.doc.style.musicFile.isEmpty {
+                Button { model.chooseMusic() } label: {
+                    Label("Add Music…", systemImage: "music.note").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                Text("Plays under the whole video, loops if it's shorter, and fades in and out.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "music.note").foregroundStyle(Theme.accent)
+                    Text(model.musicDisplayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    Spacer()
+                    Button { model.chooseMusic() } label: { Text("Replace") }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                    Button { model.removeMusic() } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(Theme.textDim)
+                        .accessibilityLabel("Remove music")
+                }
+                LabeledSlider(label: "Music volume", value: model.styleBinding(\.musicVolume, key: "musicVol"), range: 0...1,
+                              format: { "\(Int($0 * 100))%" })
+                VStack(alignment: .leading, spacing: 4) {
+                    ToggleRow(label: "Lower under voice", isOn: model.styleBinding(\.musicDuck, key: "musicDuck"))
+                    Text("Turns the music down while you're talking, then back up in the pauses.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 }

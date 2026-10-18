@@ -4,7 +4,10 @@ import AppKit
 struct TimelineView: View {
     @ObservedObject var model: EditorModel
     @ObservedObject private var appSettings = AppSettings.shared
-    @State private var zoomLevel: CGFloat = 1
+    /// The snap target being used by the current drag (edited time), shown as a guide line.
+    @State private var snapGuide: Double?
+    @State private var pinchStart: CGFloat?
+    @State private var resizeStart: CGFloat?
     @State private var drag: DragState?
     @State private var newZoom: (Double, Double)?
     /// Pointer position over the clip lane (for the blade line) and the zoom lane (for the add-zoom ghost).
@@ -61,10 +64,10 @@ struct TimelineView: View {
         return VStack(spacing: 0) {
             header
             GeometryReader { geo in
-                let contentW = max(200, (geo.size.width - inset * 2) * zoomLevel)
+                let contentW = max(200, (geo.size.width - inset * 2) * model.timelineZoom)
                 // Edited time: cuts close up and speed changes shrink clips, so it matches the transport and export.
                 let pps = contentW / CGFloat(max(map.duration, 0.01))
-                ScrollView([.horizontal, .vertical], showsIndicators: zoomLevel > 1.01 || totalH > geo.size.height) {
+                ScrollView([.horizontal, .vertical], showsIndicators: model.timelineZoom > 1.01 || totalH > geo.size.height) {
                     ZStack(alignment: .topLeading) {
                         ruler(width: contentW, pps: pps)
                         clipTrack(width: contentW, pps: pps)
@@ -87,6 +90,10 @@ struct TimelineView: View {
                             HoverPin(height: totalH - 4, blade: bladeActive).offset(x: x - 7).allowsHitTesting(false)
                         }
                         playhead(pps: pps, height: totalH - 4)
+                        if let g = snapGuide, drag != nil {
+                            Rectangle().fill(Color.yellow.opacity(0.85)).frame(width: 1, height: totalH - 4)
+                                .offset(x: CGFloat(g) * pps).allowsHitTesting(false)
+                        }
                         if model.bladeMode {
                             // Split tool: a click cuts only the lane under the pointer (not the ruler).
                             Color.clear
@@ -122,10 +129,30 @@ struct TimelineView: View {
                     .animation(.easeOut(duration: 0.15), value: model.bladeMode)
                 }
                 .defaultScrollAnchor(.topLeading)
+                // Pinch to zoom the timeline.
+                .simultaneousGesture(MagnifyGesture()
+                    .onChanged { v in
+                        if pinchStart == nil { pinchStart = model.timelineZoom }
+                        model.timelineZoom = min(24, max(1, (pinchStart ?? 1) * v.magnification))
+                    }
+                    .onEnded { _ in pinchStart = nil })
             }
         }
         // Grows with stacked effect lanes (up to a limit, then scrolls).
-        .frame(height: min(max(38 + fullH + 8, 236), 400))
+        .frame(height: max(200, min(max(38 + fullH + 8, 236), 400) + model.timelineExtraHeight))
+        // Drag the top edge to make the timeline taller or shorter.
+        .overlay(alignment: .top) {
+            Color.clear.frame(height: 6).contentShape(Rectangle())
+                .pointerStyle(.frameResize(position: .top))
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { v in
+                        if resizeStart == nil { resizeStart = model.timelineExtraHeight }
+                        model.timelineExtraHeight = min(500, max(-150, (resizeStart ?? 0) - v.translation.height))
+                    }
+                    .onEnded { _ in resizeStart = nil })
+                .help("Drag to resize the timeline")
+        }
+        .onChange(of: drag == nil) { _, ended in if ended { snapGuide = nil } }
 
     }
 
@@ -238,9 +265,20 @@ struct TimelineView: View {
                 .fixedSize()
                 .help("Jump to a flag you marked while recording")
             }
+            Button { model.snapping.toggle() } label: {
+                Label("Snap", systemImage: "arrow.right.to.line")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .background(Capsule().fill(model.snapping ? Theme.accent.opacity(0.2) : Theme.fill.opacity(0.05)))
+                    .foregroundStyle(model.snapping ? Theme.accent : Theme.textDim)
+            }
+            .buttonStyle(.plain)
+            .help(model.snapping ? "Snapping is on: blocks snap to the playhead, cuts and each other (N). Hold ⌘ while dragging to skip." : "Snapping is off (N)")
+            .accessibilityLabel(model.snapping ? "Turn snapping off" : "Turn snapping on")
+            .padding(.trailing, 6)
             Image(systemName: "minus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
-            Slider(value: $zoomLevel, in: 1...12).controlSize(.mini).frame(width: 110).tint(Theme.accent)
-                .help("Timeline zoom: about \(Int(model.duration / Double(zoomLevel))) seconds visible")
+            Slider(value: $model.timelineZoom, in: 1...24).controlSize(.mini).frame(width: 110).tint(Theme.accent)
+                .help("Timeline zoom: about \(Int(model.duration / Double(model.timelineZoom))) seconds visible (⌘= ⌘−, ⇧Z to fit, or pinch)")
             Image(systemName: "plus.magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textDim)
         }
         .padding(.horizontal, 12)
@@ -629,7 +667,7 @@ struct TimelineView: View {
             }
             .gesture(DragGesture(minimumDistance: 3).onChanged { v in
                 model.selection = .zoom(z.id)
-                let (ns, ne) = moved(z.start, z.end, by: v.translation.width, pps: pps, within: model.zoomBounds(z.id))
+                let (ns, ne) = moved(z.start, z.end, by: v.translation.width, pps: pps, within: model.zoomBounds(z.id), id: z.id)
                 drag = DragState(id: z.id, kind: .zoomMove, start: ns, end: ne)
             }.onEnded { _ in
                 if let d = drag, d.id == z.id {
@@ -639,12 +677,12 @@ struct TimelineView: View {
             })
             .overlay(alignment: .leading) { edgeHandle(color: .white, visible: selected) { dx, ended in
                 let b = model.zoomBounds(z.id)
-                let ns = clamp(map.sourceTime(comp: map.compTime(source: z.start) + Double(dx / pps)), b.lowerBound, z.end - 0.4)
+                let ns = clamp(map.sourceTime(comp: snapped(map.compTime(source: z.start) + Double(dx / pps), pps: pps, excluding: z.id)), b.lowerBound, z.end - 0.4)
                 if ended { drag = nil; model.updateZoom(z.id) { $0.start = ns } } else { drag = DragState(id: z.id, kind: .zoomLeft, start: ns, end: z.end) }
             } }
             .overlay(alignment: .trailing) { edgeHandle(color: .white, visible: selected) { dx, ended in
                 let b = model.zoomBounds(z.id)
-                let ne = clamp(map.sourceTime(comp: map.compTime(source: z.end) + Double(dx / pps)), z.start + 0.4, b.upperBound)
+                let ne = clamp(map.sourceTime(comp: snapped(map.compTime(source: z.end) + Double(dx / pps), pps: pps, excluding: z.id)), z.start + 0.4, b.upperBound)
                 if ended { drag = nil; model.updateZoom(z.id) { $0.end = ne } } else { drag = DragState(id: z.id, kind: .zoomRight, start: z.start, end: ne) }
             } }
             .frame(width: w, height: zoomH)
@@ -655,7 +693,36 @@ struct TimelineView: View {
     }
 
     /// Moves a source range by a drag in edited time, keeping its edited length and staying within `bounds` (source).
-    private func moved(_ start: Double, _ end: Double, by dx: CGFloat, pps: CGFloat, within bounds: ClosedRange<Double>) -> (Double, Double) {
+    /// Snaps an edited-time position to the nearest edit point (playhead, cuts, the edges of other blocks,
+    /// chapters) within 8 pt, and remembers it for the guide line. Holding ⌘ while dragging skips snapping.
+    private func snapped(_ comp: Double, pps: CGFloat, excluding id: UUID) -> Double {
+        guard model.snapping, !NSEvent.modifierFlags.contains(.command) else { snapGuide = nil; return comp }
+        var targets: [Double] = [model.compTime, 0, map.duration]
+        for seg in map.segments { targets += [seg.compStart, seg.compEnd] }
+        for z in model.doc.zooms where z.id != id { targets += [map.compTime(source: z.start), map.compTime(source: z.end)] }
+        for e in model.doc.effects where e.id != id { targets += [map.compTime(source: e.start), map.compTime(source: e.end)] }
+        targets += model.doc.chapters.map { map.compTime(source: $0.time) }
+        let tolerance = Double(8 / pps)
+        if let best = targets.min(by: { abs($0 - comp) < abs($1 - comp) }), abs(best - comp) < tolerance {
+            snapGuide = best
+            return best
+        }
+        snapGuide = nil
+        return comp
+    }
+
+    private func moved(_ start: Double, _ end: Double, by rawDX: CGFloat, pps: CGFloat, within bounds: ClosedRange<Double>, id: UUID) -> (Double, Double) {
+        // Snap either edge (start first) to a nearby edit point, by adjusting the drag distance.
+        let cs = map.compTime(source: start), ce = map.compTime(source: end)
+        var shift = Double(rawDX / pps)
+        let a = snapped(cs + shift, pps: pps, excluding: id)
+        if a != cs + shift {
+            shift = a - cs
+        } else {
+            let b = snapped(ce + shift, pps: pps, excluding: id)
+            shift = b - ce
+        }
+        let dx = CGFloat(shift) * pps
         // Shift in source time by how far the pointer moved in the footage, keeping the length exactly
         // (round-tripping both ends through edited time would snap an end inside a cut and change it).
         let x0 = cx(start, pps)
@@ -768,7 +835,7 @@ struct TimelineView: View {
             }
             .gesture(DragGesture(minimumDistance: 3).onChanged { v in
                 model.selection = .effect(e.id)
-                let (ns, ne) = moved(e.start, e.end, by: v.translation.width, pps: pps, within: 0...model.sourceDuration)
+                let (ns, ne) = moved(e.start, e.end, by: v.translation.width, pps: pps, within: 0...model.sourceDuration, id: e.id)
                 drag = DragState(id: e.id, kind: .effectMove, start: ns, end: ne)
             }.onEnded { _ in
                 if let d = drag, d.id == e.id {
@@ -777,11 +844,11 @@ struct TimelineView: View {
                 drag = nil
             })
             .overlay(alignment: .leading) { edgeHandle(color: .white, visible: selected) { dx, ended in
-                let ns = clamp(map.sourceTime(comp: map.compTime(source: e.start) + Double(dx / pps)), 0, e.end - 0.3)
+                let ns = clamp(map.sourceTime(comp: snapped(map.compTime(source: e.start) + Double(dx / pps), pps: pps, excluding: e.id)), 0, e.end - 0.3)
                 if ended { drag = nil; model.updateEffect(e.id) { $0.start = ns } } else { drag = DragState(id: e.id, kind: .effectLeft, start: ns, end: e.end) }
             } }
             .overlay(alignment: .trailing) { edgeHandle(color: .white, visible: selected) { dx, ended in
-                let ne = clamp(map.sourceTime(comp: map.compTime(source: e.end) + Double(dx / pps)), e.start + 0.3, model.sourceDuration)
+                let ne = clamp(map.sourceTime(comp: snapped(map.compTime(source: e.end) + Double(dx / pps), pps: pps, excluding: e.id)), e.start + 0.3, model.sourceDuration)
                 if ended { drag = nil; model.updateEffect(e.id) { $0.end = ne } } else { drag = DragState(id: e.id, kind: .effectRight, start: e.start, end: ne) }
             } }
             .frame(width: w, height: effectRowH)

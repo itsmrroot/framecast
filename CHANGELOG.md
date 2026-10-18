@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.16.0
+
+The editor works more like a video editor.
+
+- **Snapping:** zooms and effects snap to the playhead, cuts, chapters and each other's edges while you drag, with a yellow guide line. Toggle with N or the Snap button; hold ⌘ to drag freely
+- **Background music** (Audio panel): add a song; it loops to fill the video, fades in and out, and turns down automatically while you're talking
+- **Copy, paste and duplicate** zooms and effects: ⌘C, ⌘V (pastes at the playhead), ⌘D
+- **Trim to the playhead:** ⌥[ and ⌥] trim the start or end of the selected zoom, effect or clip
+- **Nudge** the selected zoom or effect with ⌥← / ⌥→ (hold ⇧ for a second at a time)
+- **Jump between edit points** (cuts, zooms, effects, chapters) with ↑ and ↓; End goes to the end
+- **Timeline zoom:** ⌘= / ⌘−, ⇧Z to fit, or pinch on the trackpad
+- **Taller timeline:** drag its top edge
+- All the new shortcuts are listed in Settings → Shortcuts → Editing
+
 ## 1.15.1
 
 - When an update has downloaded, Framecast asks you to restart to use the new version, instead of closing by itself. Choose Restart Now, or Later: the update then installs the next time you quit Framecast

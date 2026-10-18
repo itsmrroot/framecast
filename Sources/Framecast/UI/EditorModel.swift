@@ -38,6 +38,10 @@ final class EditorModel: ObservableObject {
     @Published private(set) var waveform: [Float] = []
     /// Blade tool: clicking the clip lane cuts there.
     @Published var bladeMode = false
+    /// Timeline zoom (1 = whole video fits), snapping while dragging, and extra timeline height the user dragged in.
+    @Published var timelineZoom: CGFloat = 1
+    @Published var snapping = true
+    @Published var timelineExtraHeight: CGFloat = 0
     /// An effect being dragged on the preview: the overlay draws it live, so the renderer leaves it out.
     @Published var hiddenEffect: UUID? { didSet { if hiddenEffect != oldValue { scheduleRenderRefresh() } } }
     @Published var loopPlayback = false
@@ -114,7 +118,7 @@ final class EditorModel: ObservableObject {
             if doc.style.enhanceVoice, doc.info.hasMic, VoiceEnhancer.existing(in: folder) == nil {
                 _ = try? await VoiceEnhancer.process(folder: folder)
             }
-            let assets = try await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice)
+            let assets = try await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice, musicFile: doc.style.musicFile)
             self.assets = assets
             // Keep the document in sync with the real file length.
             if abs(assets.screenDuration - doc.info.duration) > 0.05 {
@@ -129,10 +133,14 @@ final class EditorModel: ObservableObject {
                 doc.effects = doc.effects.map { var e = $0; e.end = min(e.end, d); return e }.filter { $0.duration > 0.2 }
                 doc.captions = doc.captions.filter { $0.start < d }.map { var c = $0; c.end = min(c.end, d); return c }
             }
+            // With background music that ducks under speech, read the audio first: the waveform says where
+            // people speak, and an export started right away (quick export) needs it.
+            let needsSpeech = !doc.style.musicFile.isEmpty && doc.style.musicDuck
+            if needsSpeech { waveform = await Self.loadWaveform(assets: assets, duration: sourceDuration) }
             rebuildComposition()
             isReady = true
             await generateFilmstrip()
-            waveform = await Self.loadWaveform(assets: assets, duration: sourceDuration)
+            if !needsSpeech { waveform = await Self.loadWaveform(assets: assets, duration: sourceDuration) }
         } catch {
             loadError = error.localizedDescription
         }
@@ -183,6 +191,7 @@ final class EditorModel: ObservableObject {
     private func restore(_ s: Snapshot) {
         hiddenEffect = nil
         let timelineChanged = s.clips != doc.clips
+        let filesChanged = s.style.musicFile != doc.style.musicFile || s.style.enhanceVoice != doc.style.enhanceVoice
         doc.name = s.name
         doc.clips = s.clips
         doc.zooms = s.zooms
@@ -195,6 +204,8 @@ final class EditorModel: ObservableObject {
         if case .clip(let id) = selection, !doc.clips.contains(where: { $0.id == id }) { selection = .none }
         if case .effect(let id) = selection, !doc.effects.contains(where: { $0.id == id }) { selection = .none }
         apply(timelineChanged ? .timeline : .render)
+        // Undoing "add music" or "enhance voice" swaps the audio files back too.
+        if filesChanged { Task { await reloadAssets() } }
         updateUndoState()
         scheduleSave()
     }
@@ -303,7 +314,7 @@ final class EditorModel: ObservableObject {
         guard let assets else { return }
         let keepSource = sourceTime
         editMap = EditMap(clips: doc.clips)
-        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style, duck: speechRanges())
         self.built = built
         let model = makeRenderModel(for: built)
         renderModel = model
@@ -333,7 +344,7 @@ final class EditorModel: ObservableObject {
         renderModel = model
         outputAspect = model.aspect
         item.videoComposition = previewVideoComposition(model, built: built)
-        item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style)
+        item.audioMix = CompositionBuilder.audioMix(for: built.composition, style: doc.style, duck: speechRanges())
         if !isPlaying {
             // A seek within the same frame reuses the frame already on screen, so step a frame away and back:
             // the new effect (image, arrow…) then shows straight away on the paused preview.
@@ -619,6 +630,117 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    // MARK: - Editing helpers (copy/paste, nudge, trim to playhead, edit points)
+
+    /// What ⌘C copied: a zoom or an effect, pasted at the playhead with ⌘V. Shared between editor windows.
+    private enum Clipboard { case zoom(ZoomSegment), effect(EffectSegment) }
+    private static var clipboard: Clipboard?
+
+    func copySelection() {
+        switch selection {
+        case .zoom(let id): if let z = doc.zooms.first(where: { $0.id == id }) { Self.clipboard = .zoom(z); notify("Zoom copied") }
+        case .effect(let id): if let e = doc.effects.first(where: { $0.id == id }) { Self.clipboard = .effect(e); notify("\(e.kind.label) copied") }
+        default: NSSound.beep()
+        }
+    }
+
+    /// Pastes the copied zoom or effect so it starts at the playhead.
+    func paste() {
+        let t = sourceTime
+        switch Self.clipboard {
+        case .zoom(var z):
+            let len = z.duration
+            z.id = UUID(); z.start = t; z.end = min(sourceDuration, t + len); z.isAuto = false
+            if doc.zooms.contains(where: { $0.start < z.end && z.start < $0.end }) { notify("There's already a zoom here"); return }
+            edit(.render) { $0.zooms.append(z) }
+            selection = .zoom(z.id)
+        case .effect(var e):
+            let len = e.duration
+            e.id = UUID(); e.start = t; e.end = min(sourceDuration, t + len)
+            edit(.render) { $0.effects.append(e) }
+            selection = .effect(e.id)
+        case nil:
+            NSSound.beep()
+        }
+    }
+
+    /// ⌘D: a copy of the selected zoom or effect right after it.
+    func duplicateSelection() {
+        switch selection {
+        case .zoom(let id):
+            guard var z = doc.zooms.first(where: { $0.id == id }) else { return }
+            let len = z.duration
+            z.id = UUID(); z.start = z.end + 0.1; z.end = min(sourceDuration, z.start + len); z.isAuto = false
+            guard z.end - z.start > 0.3, !doc.zooms.contains(where: { $0.start < z.end && z.start < $0.end }) else { NSSound.beep(); return }
+            edit(.render) { $0.zooms.append(z) }
+            selection = .zoom(z.id)
+        case .effect(let id):
+            guard var e = doc.effects.first(where: { $0.id == id }) else { return }
+            let len = e.duration
+            e.id = UUID(); e.start = min(e.end, max(0, sourceDuration - len)); e.end = min(sourceDuration, e.start + len)
+            edit(.render) { $0.effects.append(e) }
+            selection = .effect(e.id)
+        default:
+            NSSound.beep()
+        }
+    }
+
+    /// ⌥← / ⌥→: moves the selected zoom or effect by `seconds` (source time), keeping its length.
+    func nudgeSelection(by seconds: Double) {
+        switch selection {
+        case .zoom(let id):
+            guard let z = doc.zooms.first(where: { $0.id == id }) else { return }
+            let b = zoomBounds(id)
+            let ns = clamp(z.start + seconds, b.lowerBound, b.upperBound - z.duration)
+            updateZoom(id, coalesce: "nudge-\(id)") { $0.start = ns; $0.end = ns + z.duration }
+        case .effect(let id):
+            guard let e = doc.effects.first(where: { $0.id == id }) else { return }
+            let ns = clamp(e.start + seconds, 0, sourceDuration - e.duration)
+            updateEffect(id, coalesce: "nudge-\(id)") { $0.start = ns; $0.end = ns + e.duration }
+        default:
+            NSSound.beep()
+        }
+    }
+
+    /// ⌥[ / ⌥]: trims the start or end of the selection (or, with nothing selected, the clip under the playhead)
+    /// to the playhead.
+    func trimToPlayhead(start: Bool) {
+        let t = sourceTime
+        switch selection {
+        case .zoom(let id):
+            guard let z = doc.zooms.first(where: { $0.id == id }) else { return }
+            if start, t < z.end - 0.3 { updateZoom(id) { $0.start = t } } else if !start, t > z.start + 0.3 { updateZoom(id) { $0.end = t } } else { NSSound.beep() }
+        case .effect(let id):
+            guard let e = doc.effects.first(where: { $0.id == id }) else { return }
+            if start, t < e.end - 0.2 { updateEffect(id) { $0.start = t } } else if !start, t > e.start + 0.2 { updateEffect(id) { $0.end = t } } else { NSSound.beep() }
+        default:
+            let id: UUID? = { if case .clip(let c) = selection { return c }; return doc.clips.first { !$0.freeze && t > $0.start && t < $0.end }?.id }()
+            guard let id, let c = doc.clips.first(where: { $0.id == id }), !c.freeze else { NSSound.beep(); return }
+            if start, t < c.end - 0.3, t > c.start { setClip(id, start: t) } else if !start, t > c.start + 0.3, t < c.end { setClip(id, end: t) } else { NSSound.beep() }
+        }
+    }
+
+    /// Every place something starts or ends, in edited time: cuts, zooms, effects and chapters.
+    func editPoints() -> [Double] {
+        var pts: [Double] = [0, duration]
+        pts += editMap.segments.map(\.compStart)
+        for z in doc.zooms { pts += [editMap.compTime(source: z.start), editMap.compTime(source: z.end)] }
+        for e in doc.effects { pts += [editMap.compTime(source: e.start), editMap.compTime(source: e.end)] }
+        pts += doc.chapters.map { editMap.compTime(source: $0.time) }
+        return Array(Set(pts.map { ($0 * 1000).rounded() / 1000 })).sorted()
+    }
+
+    /// ↑ / ↓: jumps the playhead to the previous or next edit point.
+    func jumpToEditPoint(forward: Bool) {
+        let now = compTime, pts = editPoints()
+        if let t = forward ? pts.first(where: { $0 > now + 0.01 }) : pts.last(where: { $0 < now - 0.01 }) {
+            player.pause()
+            seek(comp: t)
+        } else {
+            NSSound.beep()
+        }
+    }
+
     func duplicateEffect(_ id: UUID) {
         guard var e = doc.effects.first(where: { $0.id == id }) else { return }
         e.id = UUID()
@@ -671,6 +793,58 @@ final class EditorModel: ObservableObject {
     }
 
     /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    // MARK: - Background music
+
+    /// Where someone is speaking, in edited time (from the audio waveform), for ducking the music.
+    func speechRanges() -> [(Double, Double)] {
+        guard doc.style.musicDuck, !doc.style.musicFile.isEmpty, waveform.count > 1 else { return [] }
+        let quiet = ActivityAnalyzer.silentRanges(waveform: waveform, duration: sourceDuration, threshold: nil,
+                                                 minLength: 0.6, margin: 0)
+        var speech: [(Double, Double)] = []
+        var cursor = 0.0
+        for (a, b) in quiet { if a > cursor + 0.2 { speech.append((cursor, a)) }; cursor = b }
+        if sourceDuration > cursor + 0.2 { speech.append((cursor, sourceDuration)) }
+        // Source time → edited time, piece by piece through the kept clips.
+        var out: [(Double, Double)] = []
+        for seg in editMap.segments where !seg.freeze {
+            for (a, b) in speech {
+                let s = max(a, seg.srcStart), e = min(b, seg.srcEnd)
+                if e - s > 0.1 { out.append((seg.compStart + (s - seg.srcStart) / seg.speed, seg.compStart + (e - seg.srcStart) / seg.speed)) }
+            }
+        }
+        return out.sorted { $0.0 < $1.0 }
+    }
+
+    /// Adds a music file (copied into the project) as background music.
+    func chooseMusic() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio, .mp3, .mpeg4Audio, .wav, .aiff]
+        panel.message = "Choose background music"
+        panel.directoryURL = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let dir = folder.appendingPathComponent("music", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let name = "\(UUID().uuidString).\(url.pathExtension.isEmpty ? "m4a" : url.pathExtension.lowercased())"
+        do { try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(name)) } catch { notify("Couldn't add that file"); return }
+        musicTitle = url.deletingPathExtension().lastPathComponent
+        UserDefaults.standard.set(musicTitle, forKey: "music.title.\(name)")
+        edit(.render) { $0.style.musicFile = name }
+        Task { await reloadAssets() }
+    }
+
+    func removeMusic() {
+        edit(.render) { $0.style.musicFile = "" }
+        Task { await reloadAssets() }
+    }
+
+    /// The music's original file name, for display.
+    @Published var musicTitle = ""
+    var musicDisplayName: String {
+        let f = doc.style.musicFile
+        guard !f.isEmpty else { return "" }
+        return UserDefaults.standard.string(forKey: "music.title.\(f)") ?? "Music"
+    }
+
     // MARK: - Voice
 
     @Published private(set) var enhancingVoice = false
@@ -695,7 +869,7 @@ final class EditorModel: ObservableObject {
 
     /// Reloads the recording's files (e.g. after switching to the enhanced microphone track) and rebuilds.
     private func reloadAssets() async {
-        guard let a = try? await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice) else { return }
+        guard let a = try? await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice, musicFile: doc.style.musicFile) else { return }
         assets = a
         rebuildComposition()
     }
@@ -1035,7 +1209,7 @@ final class EditorModel: ObservableObject {
 
     func exportJob() -> ExportJob? {
         guard let assets else { return nil }
-        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style)
+        let built = CompositionBuilder.build(assets: assets, editMap: editMap, style: doc.style, duck: speechRanges())
         return ExportJob(built: built, model: makeRenderModel(for: built))
     }
 

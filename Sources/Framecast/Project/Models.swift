@@ -707,6 +707,10 @@ struct Style: Codable, Equatable {
     var micVolume: Double = 1
     /// Use the cleaned-up microphone track (VoiceEnhancer).
     var enhanceVoice = false
+    /// Background music: a file in the project's "music" folder, its volume, and whether it ducks under speech.
+    var musicFile = ""
+    var musicVolume: Double = 0.3
+    var musicDuck = true
 
     static let `default` = Style()
 }
