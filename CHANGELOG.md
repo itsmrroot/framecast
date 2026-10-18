@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.12.0
+
+Tuned to measurements of Screen Studio, recorded frame by frame side by side.
+
+**Smoother recordings**
+- Zooms are front-loaded like Screen Studio's: about two thirds of the zoom happens in the first 0.2 s, then it lands softly (0.77 s in all)
+- The camera now gets there first: it starts moving as the cursor sets off, heads straight for it, and then holds still, with no slow creep afterwards
+- No more sideways sway while zooming out
+- Motion blur on every moving frame, in proportion to speed and fading out as the camera slows, with no frame-to-frame flicker
+- Automatic zooms now default to 4×, like Screen Studio (change it in the Zoom panel)
+
+**Editor, matched to Screen Studio**
+- Clips are Screen Studio's saturated gold, zooms its deeper violet, and blur and spotlight its pink "mask" colour
+- Selection is a thin 1 pt outline, with no glow; clips show a light rim when you point at them
+- With the split tool on, the lanes gently bob in a slow wave, like Screen Studio's, until you turn it off
+
 ## 1.11.1
 
 - Fixed two Framecast icons (and two recording timers) in the menu bar: an old built-in menu bar item was still there next to the new one

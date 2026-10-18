@@ -241,26 +241,28 @@ final class FrameRenderer: @unchecked Sendable {
     /// Blurs the frame along the camera's movement: directional blur for pans, zoom blur for zooms.
     private func cameraMotionBlur(_ image: CIImage, model: RenderModel, t: Double, cam: CameraPath.State,
                                   sr: CGRect, size: CGSize, unit: CGFloat, s: CGFloat, ox: CGFloat, oy: CGFloat) -> CIImage {
-        let prev = model.camera.state(at: max(0, t - 1.0 / 60))
         let amount = CGFloat(model.style.motionBlur)
         let canvas = CGRect(origin: .zero, size: size)
         var out = image
-        // Only blur what the viewer actually sees move: the clamped view, not the raw focus point
-        // (at zoom 1 the focus follows the cursor but the picture stays still).
-        let prevView = viewTransform(model: model, sourceTime: max(0, t - 1.0 / 60), size: size)
-        guard s > 1.01 || prevView.scale > 1.01 else { return image }
-        let dx = (prevView.origin.x - ox) * s
-        let dy = (prevView.origin.y - oy) * s
-        // Kept subtle: it should soften fast movement, not smear text.
-        let pan = min(hypot(dx, dy) * amount * 0.3, 10 * unit)
-        if pan > 4 * unit {
+        // Velocity from a frame either side (symmetric), so the blur changes smoothly from frame to frame
+        // instead of flickering. Measured on the clamped view: what the viewer actually sees move.
+        let h = 1.0 / 60
+        let a = viewTransform(model: model, sourceTime: max(0, t - h), size: size)
+        let b = viewTransform(model: model, sourceTime: t + h, size: size)
+        guard s > 1.01 || a.scale > 1.01 || b.scale > 1.01 else { return image }
+        let dx = (a.origin.x - b.origin.x) / 2 * s
+        let dy = (a.origin.y - b.origin.y) / 2 * s
+        // Every moving frame gets a blur in proportion to its speed, fading out as the camera slows
+        // (as in Screen Studio), with no hard on/off threshold.
+        let pan = min(max(0, hypot(dx, dy) * amount * 0.6 - 0.5 * unit), 24 * unit)
+        if pan > 0.3 {
             out = out.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
                 kCIInputRadiusKey: pan, kCIInputAngleKey: atan2(dy, dx),
             ]).cropped(to: canvas)
         }
-        let zoomRate = abs(CGFloat(cam.scale - prev.scale)) / max(CGFloat(cam.scale), 1)
-        let zoom = min(zoomRate * amount * 70 * unit, 10 * unit)
-        if zoom > 1.5 {
+        let zoomRate = abs(b.scale - a.scale) / 2 / max(s, 1)
+        let zoom = min(max(0, zoomRate * amount * 110 * unit - 0.3 * unit), 16 * unit)
+        if zoom > 0.3 {
             let fx = (sr.minX + cam.focus.x * sr.width - ox) * s
             let fy = (sr.maxY - cam.focus.y * sr.height - oy) * s
             out = out.clampedToExtent().applyingFilter("CIZoomBlur", parameters: [

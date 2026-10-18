@@ -7,7 +7,7 @@ import CoreMedia
 
 /// A critically damped spring's step response, normalised to reach 1 at x = 1: starts at rest, rises
 /// quickly and settles gently. This is the "fast but smooth" feel of Screen Studio's zooms.
-func springEase(_ x: Double, stiffness k: Double = 7) -> Double {
+func springEase(_ x: Double, stiffness k: Double = 9.3) -> Double {
     let t = clamp(x, 0, 1)
     let f = { (u: Double) in 1 - (1 + k * u) * exp(-k * u) }
     return f(t) / f(1)

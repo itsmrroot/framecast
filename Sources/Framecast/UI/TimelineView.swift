@@ -16,6 +16,7 @@ struct TimelineView: View {
     @State private var effectsFocus = false
     /// Split-tool motion: each lane dips and springs back when the tool turns on/off or that lane is cut.
     @State private var laneKicks = [0, 0, 0]
+    @State private var hoveredBlock: UUID?
     @State private var hoverY: CGFloat?
 
     /// Effects lane open: pointing at it, or (when not pointing at the timeline) an effect is selected.
@@ -65,13 +66,13 @@ struct TimelineView: View {
                     ZStack(alignment: .topLeading) {
                         ruler(width: contentW, pps: pps)
                         clipTrack(width: contentW, pps: pps)
-                            .modifier(LaneMotion(kick: laneKicks[0], index: 0, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 0))
+                            .modifier(LaneMotion(active: model.bladeMode, index: 0))
                             .offset(y: rulerH + 6)
                         zoomTrack(width: contentW, pps: pps)
-                            .modifier(LaneMotion(kick: laneKicks[1], index: 1, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 1))
+                            .modifier(LaneMotion(active: model.bladeMode, index: 1))
                             .offset(y: zoomY)
                         effectTrack(width: contentW, pps: pps, rows: rows, height: effectsH)
-                            .modifier(LaneMotion(kick: laneKicks[2], index: 2, lifted: liftedLane(zoomY: zoomY, effectsY: effectsY) == 2))
+                            .modifier(LaneMotion(active: model.bladeMode, index: 2))
                             .offset(y: effectsY)
                         if compact {
                             laneLabel("Zooms").offset(y: zoomY - labelH).transition(.opacity)
@@ -123,8 +124,7 @@ struct TimelineView: View {
         }
         // Grows with stacked effect lanes (up to a limit, then scrolls).
         .frame(height: min(max(38 + fullH + 8, 236), 400))
-        .onChange(of: model.bladeMode) { _, _ in laneKicks = laneKicks.map { $0 + 1 } }
-        .onChange(of: model.cutTick) { _, _ in laneKicks[model.lastCutLane] += 1 }
+
     }
 
     /// With the split tool on, the lane under the pointer (the one a click would cut) lifts slightly.
@@ -341,7 +341,7 @@ struct TimelineView: View {
 
             // Faint, so the clips keep Screen Studio's pure gold.
             filmstrip(width: width, pps: pps)
-                .opacity(0.1)
+                .opacity(0.04)
                 .frame(width: width, height: clipH)
                 .mask(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
@@ -381,17 +381,20 @@ struct TimelineView: View {
         let (cs, ce) = clipSpan(c)
         let selected = model.selection == .clip(c.id)
         let w = max(2, CGFloat(ce - cs) * pps)
-        return RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(selected ? Theme.clipGradientSelected : Theme.clipGradient)
-            .overlay(
-                // A gold rim, brighter along the bottom, like light coming from below.
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(selected ? AnyShapeStyle(Color.white.opacity(0.9))
-                                           : AnyShapeStyle(LinearGradient(colors: [Theme.clipRim.opacity(0.55), Theme.clipRim],
-                                                                          startPoint: .top, endPoint: .bottom)),
-                                  lineWidth: selected ? 2 : 1)
-            )
-            .shadow(color: Theme.clip.opacity(selected ? 0.4 : 0.12), radius: selected ? 8 : 3, y: 1)
+        let hovered = hoveredBlock == c.id
+        // Screen Studio's clip: saturated gold, flat (no glow), a light bottom rim on hover,
+        // and a thin 1 pt outline when selected.
+        return RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Theme.clipGradient)
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.clipOutline, lineWidth: 1)
+                } else if hovered {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(LinearGradient(colors: [.clear, Theme.clipRim], startPoint: .center, endPoint: .bottom), lineWidth: 1)
+                }
+            }
+            .onHover { inside in hoveredBlock = inside ? c.id : (hoveredBlock == c.id ? nil : hoveredBlock) }
             .overlay {
                 if w > 60 {
                     VStack(spacing: 2) {
@@ -562,18 +565,13 @@ struct TimelineView: View {
         let (cs, ce) = span(s, e)
         let selected = model.selection == .zoom(z.id)
         let w = max(4, CGFloat(ce - cs) * pps)
-        let radius: CGFloat = compact ? 6 : 9
+        let radius: CGFloat = compact ? 6 : 8
         return RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(selected ? Theme.zoomGradientSelected : Theme.zoomGradient)
+            .fill(Theme.zoomGradient)
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(selected ? AnyShapeStyle(Color.white)
-                                           : AnyShapeStyle(LinearGradient(colors: [Theme.zoomRim.opacity(0.35), Theme.zoomRim.opacity(0.8)],
-                                                                          startPoint: .top, endPoint: .bottom)),
-                                  lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected ? Theme.zoomOutline : Theme.zoomRim.opacity(0.6), lineWidth: 1)
             )
-            .overlay { if selected { SelectionRing(radius: radius) } }
-            .shadow(color: Theme.zoom.opacity(selected ? 0.55 : 0.3), radius: selected ? 10 : 5, y: 1)
             .opacity(model.doc.style.zoomsDisabled ? 0.4 : 1)
             .overlay {
                 if w > 54 && !compact {
@@ -673,6 +671,20 @@ struct TimelineView: View {
         }
     }
 
+    /// Lane fills, top to bottom. Blur and spotlight use Screen Studio's mask pink; the others keep their own hue
+    /// at the same depth, so the lanes read as one set.
+    static func effectFill(_ kind: EffectKind) -> (Color, Color) {
+        func c(_ h: UInt32) -> Color { Color(red: Double((h >> 16) & 0xff) / 255, green: Double((h >> 8) & 0xff) / 255, blue: Double(h & 0xff) / 255) }
+        switch kind {
+        case .blur, .spotlight: return (c(0x792F49), c(0x8B3955))
+        case .text: return (c(0x7A3166), c(0x8E3D78))
+        case .image: return (c(0x3E2F86), c(0x4F3EA0))
+        case .annotation: return (c(0x7A3A1C), c(0x8E4724))
+        case .hideCursor: return (c(0x3A3A44), c(0x484853))
+        case .cameraFull, .cameraHidden, .cameraMove: return (c(0x1F5A3A), c(0x286B46))
+        }
+    }
+
     /// Dark text on the light yellow spotlight, white on the rest.
     static func effectLabelColor(_ kind: EffectKind) -> Color {
         kind == .spotlight ? Color.black.opacity(0.8) : .white
@@ -747,20 +759,14 @@ struct TimelineView: View {
     }
 
     private func effectFace(_ e: EffectSegment, selected: Bool, w: CGFloat, color: Color, title: String) -> some View {
-        let radius: CGFloat = effectsOpen ? 9 : 5
+        let radius: CGFloat = effectsOpen ? 8 : 5
+        let (top, bottom) = Self.effectFill(e.kind)
         return RoundedRectangle(cornerRadius: radius, style: .continuous)
-            // Deep, opaque fills lit from below with a lighter rim (labels stay readable in light mode too).
-            .fill(LinearGradient(colors: [color.mix(with: .black, by: selected ? 0.48 : 0.56), color.mix(with: .black, by: selected ? 0.38 : 0.46)],
-                                 startPoint: .top, endPoint: .bottom))
+            .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(selected ? AnyShapeStyle(Color.white)
-                                           : AnyShapeStyle(LinearGradient(colors: [color.opacity(0.35), color.opacity(0.75)],
-                                                                          startPoint: .top, endPoint: .bottom)),
-                                  lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected ? Color.white.opacity(0.8) : bottom.mix(with: .white, by: 0.25).opacity(0.7), lineWidth: 1)
             )
-            .overlay { if selected && effectsOpen { SelectionRing(radius: radius) } }
-            .shadow(color: color.opacity(selected ? 0.45 : 0.12), radius: selected ? 8 : 3, y: 1)
             .opacity(e.disabled ? 0.4 : 1)
             .overlay {
                 if w > 30 && effectsOpen {
@@ -923,27 +929,19 @@ enum ScissorsCursor {
     }()
 }
 
-/// The split tool's lane motion (as in Screen Studio): a quick dip and springy return, staggered by lane,
-/// plus a small lift for the lane under the pointer.
+/// The split tool's lane motion, measured from Screen Studio: while the tool is on, every lane gently bobs
+/// ±1 pt with a period of about 0.85 s, each lane a little behind the one above (the effects lane moves
+/// opposite), like a slow wave. It stops as soon as the tool is turned off.
 private struct LaneMotion: ViewModifier {
-    let kick: Int
+    let active: Bool
     let index: Int
-    let lifted: Bool
 
     func body(content: Content) -> some View {
-        content
-            .offset(y: lifted ? -3 : 0)
-            .shadow(color: .black.opacity(lifted ? 0.45 : 0), radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lifted)
-            .keyframeAnimator(initialValue: 0.0, trigger: kick) { view, y in
-                view.offset(y: y)
-            } keyframes: { _ in
-                KeyframeTrack {
-                    // Never a zero-length keyframe: it produces NaN geometry (and a crash).
-                    LinearKeyframe(0, duration: 0.01 + 0.045 * Double(index))
-                    CubicKeyframe(7, duration: 0.11)
-                    SpringKeyframe(0, duration: 0.5, spring: Spring(response: 0.4, dampingRatio: 0.55))
-                }
-            }
+        SwiftUI.TimelineView(.animation(paused: !active)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let phase = 2 * Double.pi * (t / 0.85) - Double(index) * 0.74 + (index == 2 ? Double.pi : 0)
+            content.offset(y: active ? CGFloat(sin(phase)) : 0)
+        }
+        .animation(.easeOut(duration: 0.05), value: active)
     }
 }

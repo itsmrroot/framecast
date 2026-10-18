@@ -146,7 +146,7 @@ final class CameraPath {
         let sorted = zooms.sorted { $0.start < $1.start }
         let dt = 1.0 / rate
         // Focused: a stiffer, quicker camera. Smooth: a little floatier, but never slow.
-        let omega = animation == .focused ? 12.0 : 8.5
+        let omega = animation == .focused ? 14.0 : 11.0
         let transition = animation == .focused ? transition * 0.7 : transition
 
         var c = CGPoint(x: 0.5, y: 0.5)
@@ -154,6 +154,9 @@ final class CameraPath {
         // While a zoom ramps in, the focus glides with the scale (one motion) from where it was.
         var rampFor: UUID?
         var rampFrom = CGPoint(x: 0.5, y: 0.5)
+        // Following: once the cursor leaves the comfortable middle, the camera heads straight for it and
+        // then holds still. (Chasing a receding edge-of-dead-zone target is what made it creep.)
+        var chasing = false
 
         func cursorAt(_ t: Double) -> CGPoint {
             guard let cursor, cursor.hasData else { return CGPoint(x: 0.5, y: 0.5) }
@@ -166,6 +169,7 @@ final class CameraPath {
             var active: ZoomSegment?
             var rampEnd = 0.0
             var activeIn = 1.0
+            var zoomingOut = false
             for z in sorted {
                 let T = z.instant ? 0 : max(0.05, min(transition, z.duration / 2))
                 // "Start animation early": the zoom-in finishes as the block starts instead of after it.
@@ -181,6 +185,7 @@ final class CameraPath {
                     active = z
                     rampEnd = inStart + T
                     activeIn = pIn
+                    zoomingOut = T > 0 && t > z.end - T
                 }
             }
 
@@ -191,8 +196,9 @@ final class CameraPath {
                 // While zooming in, aim at where the cursor will be once the zoom settles.
                 desired = cursorAt(rampEnd)
             } else {
-                // A little lookahead so following pans move with the cursor instead of trailing it.
-                desired = cursorAt(t + 0.08)
+                // Look ahead, so the camera is already moving as the cursor sets off and arrives with it
+                // (Screen Studio's camera starts about 0.2 s before the cursor).
+                desired = cursorAt(t + 0.22)
             }
 
             if best <= 1.001 || (active?.instant == true && t < (active?.start ?? 0) + 2 * dt) {
@@ -200,6 +206,10 @@ final class CameraPath {
                 c = desired
                 v = .zero
                 rampFor = nil
+            } else if zoomingOut {
+                // Zooming out: hold the focus, so the view shrinks back in one direction instead of swaying.
+                v = .zero
+                chasing = false
             } else if let z = active, t < rampEnd {
                 // Zooming in: focus and scale move as one, on the same curve, so nothing drifts afterwards.
                 if rampFor != z.id { rampFor = z.id; rampFrom = c }
@@ -208,11 +218,12 @@ final class CameraPath {
             } else {
                 var target = desired
                 if let z = active, z.mode == .followCursor {
-                    // Soft dead zone: the camera only pans once the cursor nears the edge of the visible area.
-                    let hx = viewHalfExtent.width / best * 0.38
-                    let hy = viewHalfExtent.height / best * 0.38
-                    target.x = desired.x - clamp(desired.x - c.x, -hx, hx)
-                    target.y = desired.y - clamp(desired.y - c.y, -hy, hy)
+                    let hx = viewHalfExtent.width / best * 0.3
+                    let hy = viewHalfExtent.height / best * 0.3
+                    let dx = desired.x - c.x, dy = desired.y - c.y
+                    if abs(dx) > hx || abs(dy) > hy { chasing = true }
+                    if chasing && abs(dx) < hx * 0.15 && abs(dy) < hy * 0.15 && hypot(v.dx, v.dy) < 0.02 { chasing = false }
+                    target = chasing ? desired : c
                 }
                 let ax = omega * omega * (target.x - c.x) - 2 * omega * v.dx
                 let ay = omega * omega * (target.y - c.y) - 2 * omega * v.dy

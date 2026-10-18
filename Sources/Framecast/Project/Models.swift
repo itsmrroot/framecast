@@ -632,11 +632,11 @@ struct Style: Codable, Equatable {
     var cursorRotation: CursorRotation = .off
     var cursorTiltAmount: Double = 0.3
 
-    var zoomTransition: Double = 0.65
-    var defaultZoomScale: Double = 2.0
+    var zoomTransition: Double = 0.77
+    var defaultZoomScale: Double = 4.0
     var screenAnimation: ScreenAnimation = .smooth
     /// Cinematic blur on the whole screen while zooming and panning (0 = off).
-    var motionBlur: Double = 0.3
+    var motionBlur: Double = 0.7
     /// Begin zooming in before each zoom starts, so it's fully zoomed on time.
     var startZoomEarly = false
     /// Keep zooms on the timeline but don't render them.
