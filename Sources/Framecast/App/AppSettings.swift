@@ -14,6 +14,7 @@ final class AppSettings: ObservableObject {
     @Published var launchView: LaunchView { didSet { d.set(launchView.rawValue, forKey: "app.launchView") } }
     @Published var appearance: AppAppearance { didSet { d.set(appearance.rawValue, forKey: "app.appearance"); applyAppearance() } }
     @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon(); MenuBarController.shared.update() } }
+    @Published var showWaveform: Bool { didSet { d.set(showWaveform, forKey: "app.waveform") } }
     @Published var showMenuBarIcon: Bool { didSet { d.set(showMenuBarIcon, forKey: "app.menuBarIcon"); MenuBarController.shared.update() } }
 
     // Recording
@@ -51,6 +52,7 @@ final class AppSettings: ObservableObject {
             "app.highlightArea": true,
             "app.recordingWidget": true,
             "app.menuBarIcon": true,
+            "app.waveform": true,
             "app.cameraResolution": 1080,
             "app.cameraPreview": true,
             "app.autosave": true,
@@ -64,6 +66,7 @@ final class AppSettings: ObservableObject {
         appearance = AppAppearance(rawValue: d.string(forKey: "app.appearance") ?? "") ?? .dark
         hideDockIcon = d.bool(forKey: "app.hideDock")
         showMenuBarIcon = d.bool(forKey: "app.menuBarIcon")
+        showWaveform = d.bool(forKey: "app.waveform")
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
         highlightRecordedArea = d.bool(forKey: "app.highlightArea")
         showRecordingWidget = d.bool(forKey: "app.recordingWidget")

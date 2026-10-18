@@ -4,70 +4,14 @@ import AppKit
 @main
 struct FramecastApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var app = AppSettings.shared
+    @ObservedObject private var rec = RecorderSettings.shared
 
     var body: some Scene {
         // The menu bar item is MenuBarController (App/MenuBar.swift); a SwiftUI MenuBarExtra here would add a second one.
         // A scene is still required for the app's menus, so an empty Settings scene carries them.
         Settings { EmptyView() }
-        .commands {
-            CommandGroup(after: .appInfo) {
-                Button("Check for Updates…") { Task { await Updater.shared.check(manual: true) } }
-            }
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { WindowManager.shared.showSettings() }
-                    .keyboardShortcut(",", modifiers: [.command])
-            }
-            CommandGroup(replacing: .newItem) {
-                Button("New Recording…") { RecordingToolbar.shared.show() }
-                    .keyboardShortcut("n", modifiers: [.command])
-                Button("Show Recordings") { WindowManager.shared.showHome() }
-                    .keyboardShortcut("0", modifiers: [.command])
-                Divider()
-                Button("Import Video…") { ProjectLibrary.shared.importVideo() }
-                    .keyboardShortcut("i", modifiers: [.command])
-            }
-            CommandGroup(replacing: .saveItem) {
-                Button("Save") { WindowManager.shared.activeEditor?.saveNow() }
-                    .keyboardShortcut("s", modifiers: [.command])
-            }
-            CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { WindowManager.shared.undo() }
-                    .keyboardShortcut("z", modifiers: [.command])
-                Button("Redo") { WindowManager.shared.redo() }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
-            }
-            CommandMenu("Edit Video") {
-                Button("Play / Pause") { WindowManager.shared.activeEditor?.togglePlay() }
-                Button("Split at Playhead") { WindowManager.shared.activeEditor?.splitAtPlayhead() }
-                Button("Add Zoom at Playhead") {
-                    if let e = WindowManager.shared.activeEditor { e.addZoom(at: e.sourceTime) }
-                }
-                Menu("Add Effect at Playhead") {
-                    ForEach(EffectKind.allCases) { kind in
-                        Button(kind.label) { WindowManager.shared.activeEditor?.addEffect(kind) }
-                    }
-                }
-                Button("Crop Recording…") { WindowManager.shared.activeEditorController?.showCrop() }
-                Button("Loop Playback") { WindowManager.shared.activeEditor?.loopPlayback.toggle() }
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-                Divider()
-                Button("Command Palette…") { WindowManager.shared.activeEditorController?.showPalette() }
-                    .keyboardShortcut("k", modifiers: [.command])
-                Divider()
-                Button("Export…") { WindowManager.shared.activeEditorController?.showExport() }
-                    .keyboardShortcut("e", modifiers: [.command])
-                Button("Quick Export to Clipboard") { WindowManager.shared.activeEditorController?.quickExport(toFile: false) }
-                    .keyboardShortcut("c", modifiers: [.command, .option])
-                Button("Quick Export to File…") { WindowManager.shared.activeEditorController?.quickExport(toFile: true) }
-                    .keyboardShortcut("s", modifiers: [.command, .option])
-            }
-            CommandGroup(after: .toolbar) {
-                ForEach(InspectorTab.allCases) { tab in
-                    Button("\(tab.label) Panel") { WindowManager.shared.activeEditorController?.showPanel(tab) }
-                        .keyboardShortcut(KeyEquivalent(Character("\(tab.number)")), modifiers: [.command])
-                }
-            }
-        }
+        .commands { FramecastCommands() }
     }
 }
 
@@ -346,6 +290,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         DispatchQueue.main.async { self.updateDockIcon() }
+    }
+
+    /// Window → Reset Window Positions: centre every Framecast window on the main screen.
+    func resetWindowPositions() {
+        for w in [homeWindow, settingsWindow].compactMap({ $0 }) + editors.values.compactMap({ $0.window }) where w.isVisible {
+            w.center()
+        }
     }
 
     func hideAllForRecording() {

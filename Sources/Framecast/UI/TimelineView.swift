@@ -3,6 +3,7 @@ import AppKit
 
 struct TimelineView: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject private var appSettings = AppSettings.shared
     @State private var zoomLevel: CGFloat = 1
     @State private var drag: DragState?
     @State private var newZoom: (Double, Double)?
@@ -382,7 +383,7 @@ struct TimelineView: View {
                 clipBlock(c, pps: pps)
             }
 
-            if !model.waveform.isEmpty {
+            if !model.waveform.isEmpty && appSettings.showWaveform {
                 waveform(width: width, pps: pps)
                     .frame(width: width, height: clipH)
                     .allowsHitTesting(false)

@@ -11,6 +11,7 @@ New tools from the most-requested features for screen recorders (Screen Studio's
 - **Camera steps aside:** the camera bubble fades when the cursor goes behind it, so it never hides what you're clicking (Camera panel)
 - The camera hides during full-screen slides
 - Fixed: dragging a title or image on the video lagged behind the pointer
+- **Menus like Screen Studio's, with icons:** Framecast (About, Check for Updates, What's New, Website, Send Feedback, Settings), File (New Recording ⌃⌘↩, Record Display / Window / Area / iPhone, After Recording choices, Automatically Create Zooms, Open Recent, Open Project, Open Last Project, Show Recordings, Create Project from Video), Edit Video (split tool, slides, freeze frame, chapters and more), View (every panel ⌘1…8, Show Audio Waveform, Loop Playback, Speaker Notes, Recording Widget, Watch Full Screen) and Window (Reset Window Positions, Start Recording)
 
 ## 1.12.1
 
