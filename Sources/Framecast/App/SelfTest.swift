@@ -143,6 +143,12 @@ enum SelfTest {
         let moving = (0..<300).map { i in CursorSample(t: 1 + Double(i) / 60, x: 0.2 + Double(min(i, 240)) * 0.002, y: 0.5) }
         let follow = ZoomGenerator.generate(from: [ClickEvent(t: 1, x: 0.2, y: 0.5, button: 0)], duration: 20, scale: 2, samples: moving)
         check(follow.count == 1 && abs(follow[0].end - 6.0) < 0.1, "zoom stays in while the cursor keeps moving (ends \(follow.first.map { String(format: "%.1f", $0.end) } ?? "-"))")
+        // The zoom-in follows Screen Studio's measured curve: 67% at 0.19 s, 89% at 0.33 s, settled by 0.77 s.
+        let path = CameraPath(zooms: [ZoomSegment(start: 1, end: 5, scale: 4, mode: .fixed)], cursor: nil, duration: 6,
+                              transition: 0.77, viewHalfExtent: CGSize(width: 0.5, height: 0.5))
+        func progress(_ dt: Double) -> Double { (path.state(at: 1 + dt).scale - 1) / 3 }
+        check(abs(progress(0.19) - 0.67) < 0.06 && abs(progress(0.333) - 0.9) < 0.05 && progress(0.77) > 0.98,
+              "zoom curve matches Screen Studio (\(String(format: "%.2f %.2f %.2f", progress(0.19), progress(0.333), progress(0.77))))")
         let held = EditMap(clips: [Clip.freezeFrame(at: 0, seconds: 2), Clip(start: Clip.freezeSliver, end: 3)])
         check(abs(held.duration - (2 + 3 - Clip.freezeSliver)) < 0.001 && held.segments.first?.freeze == true,
               "freeze frame adds its hold time (\(String(format: "%.2f", held.duration))s)")

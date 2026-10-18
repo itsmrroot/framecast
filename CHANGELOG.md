@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.15.0
+
+**Zoom animation, tuned with research and Screen Studio's measured motion**
+- The zoom is now driven by a critically damped spring, stepped every frame. Its curve matches Screen Studio's measurements point for point: about two thirds of the way in 0.2 s, then a soft landing, fully in by 0.77 s
+- Because it's a spring, one zoom flowing into another (or changing target mid-zoom) bends smoothly instead of restarting
+- Travel zoom-out: when the camera has a long way to go while zoomed in, it eases out a little, pans and comes back in, which is easier to follow than a fast slide at full zoom (the smooth zoom-and-pan path from van Wijk and Nuij's research)
+
 ## 1.14.1
 
 - Exports are saved to your Movies folder by default. Pick any folder in the save window as usual, or change the default in Settings → Export

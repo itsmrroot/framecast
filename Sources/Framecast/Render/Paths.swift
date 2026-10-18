@@ -163,36 +163,46 @@ final class CameraPath {
             return cursor.state(at: t).position
         }
 
+        // Zoom level: a critically damped spring on the scale, stepped every frame. Its step response matches
+        // Screen Studio's measured zoom point for point (67% at 0.19 s, 89% at 0.33 s, settled by 0.77 s), and
+        // because it's a spring, a change of target mid-zoom (one zoom straight into another, or the travel
+        // zoom-out below) just bends the motion instead of restarting it.
+        var ls = 1.0, lv = 0.0
+        var lastT = transition
+        var prevActive: ZoomSegment?
+
         for i in 0..<n {
             let t = Double(i) * dt
-            var best = 1.0
             var active: ZoomSegment?
+            var baseLog = 1.0
             var rampEnd = 0.0
-            var activeIn = 1.0
-            var zoomingOut = false
             for z in sorted {
                 let T = z.instant ? 0 : max(0.05, min(transition, z.duration / 2))
                 // "Start animation early": the zoom-in finishes as the block starts instead of after it.
                 let inStart = startEarly ? z.start - T : z.start
-                guard t >= inStart && t <= z.end else { continue }
-                // Spring-shaped: quick to get going, gentle to land, both in and out.
-                let pIn = T > 0 ? springEase((t - inStart) / T) : 1
-                let pOut = T > 0 ? 1 - springEase((t - (z.end - T)) / T) : 1
-                // Interpolate in log space so the zoom feels linear.
-                let s = exp(log(max(1, z.scale)) * min(pIn, t > z.end - T ? pOut : 1))
-                if s >= best {
-                    best = s
+                // The zoom-out starts a little before the block ends, so it's mostly out by the end.
+                let outAt = z.instant ? z.end : z.end - T * 0.5
+                guard t >= inStart && t < outAt else { continue }
+                let L = max(1, z.scale)
+                if L >= baseLog {
+                    baseLog = L
                     active = z
                     rampEnd = inStart + T
-                    activeIn = pIn
-                    zoomingOut = T > 0 && t > z.end - T
+                    lastT = max(0.05, T)
                 }
             }
+            // Instant zooms cut straight in and out.
+            if active?.instant == true && prevActive?.id != active?.id { ls = baseLog; lv = 0 }
+            if prevActive?.instant == true && active?.id != prevActive?.id { ls = baseLog; lv = 0 }
+            prevActive = active
+
+            let zoomingIn = active != nil && ls < 1 + (baseLog - 1) * 0.97 && t < rampEnd + lastT
+            let releasing = active == nil && ls > 1.002
 
             var desired: CGPoint
             if let z = active, z.mode == .fixed {
                 desired = CGPoint(x: z.focusX, y: z.focusY)
-            } else if active != nil, t < rampEnd {
+            } else if active != nil, zoomingIn {
                 // While zooming in, aim at where the cursor will be once the zoom settles.
                 desired = cursorAt(rampEnd)
             } else {
@@ -201,16 +211,36 @@ final class CameraPath {
                 desired = cursorAt(t + 0.22)
             }
 
+            // Travel zoom-out: when the camera has to cover a long way while zoomed in, it eases out a little,
+            // pans, and comes back in (the smooth zoom-and-pan path from van Wijk and Nuij). Panning fast at
+            // full zoom is what makes long moves hard to follow.
+            var targetLog = baseLog
+            if let z = active, z.mode == .followCursor, !zoomingIn, baseLog > 1.05 {
+                let k = ls
+                let vx = viewHalfExtent.width / k, vy = viewHalfExtent.height / k
+                let far = max(abs(desired.x - c.x) / max(vx, 0.001), abs(desired.y - c.y) / max(vy, 0.001))
+                // Ease out to at most about two thirds of the zoom, in proportion to how far there is to go.
+                if far > 1.3 { targetLog = max(1 + (baseLog - 1) * 0.55, baseLog - (baseLog - 1) * 0.3 * (far - 1.3)) }
+            }
+
+            let ws = 8.7 / max(0.1, lastT) // settles to 99.8% in one transition time
+            let acc = ws * ws * (targetLog - ls) - 2 * ws * lv
+            lv += acc * dt
+            ls += lv * dt
+            if abs(targetLog - ls) < 1e-5 && abs(lv) < 1e-4 { ls = targetLog; lv = 0 }
+            let best = max(1, ls)
+            let activeIn = baseLog > 1 ? min(1, max(0, (ls - 1) / (baseLog - 1))) : 1
+
             if best <= 1.001 || (active?.instant == true && t < (active?.start ?? 0) + 2 * dt) {
                 // At rest (or cutting straight into an instant zoom) the camera sits on its target.
                 c = desired
                 v = .zero
                 rampFor = nil
-            } else if zoomingOut {
+            } else if releasing {
                 // Zooming out: hold the focus, so the view shrinks back in one direction instead of swaying.
                 v = .zero
                 chasing = false
-            } else if let z = active, t < rampEnd {
+            } else if let z = active, zoomingIn {
                 // Zooming in: focus and scale move as one, on the same curve, so nothing drifts afterwards.
                 if rampFor != z.id { rampFor = z.id; rampFrom = c }
                 c = CGPoint(x: rampFrom.x + (desired.x - rampFrom.x) * activeIn, y: rampFrom.y + (desired.y - rampFrom.y) * activeIn)
