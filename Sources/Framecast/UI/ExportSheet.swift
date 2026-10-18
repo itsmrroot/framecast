@@ -105,8 +105,10 @@ struct ExportSheet: View {
         var text = "\(Int(size.width)) × \(Int(size.height)) · \(formatTime(duration))"
         if settings.format == .mp4 {
             let bitrate = size.width * size.height * Double(settings.fps) * settings.quality.bitsPerPixel
+            // The bitrate is the most the encoder may use. Screen recordings are mostly still between frames, so
+            // they usually come out at a quarter to a third of it (a 4K test: 450 MB budget, 121 MB file).
             let mb = bitrate * duration / 8 / 1_000_000
-            text += String(format: " · about %.0f MB", max(1, mb))
+            text += String(format: " · about %.0f–%.0f MB", max(1, mb * 0.25), max(1, mb))
         } else {
             // Rough: screen recordings compress to about 0.1 byte per pixel per frame as GIF.
             let mb = size.width * size.height * Double(settings.gifFPS) * duration * 0.1 / 1_000_000

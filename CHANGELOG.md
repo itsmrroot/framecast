@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.1
+
+- Exports are saved to your Movies folder by default. Pick any folder in the save window as usual, or change the default in Settings → Export
+- The export size estimate shows a realistic range (for example "about 110–450 MB"): screen recordings usually come out well below the maximum, at the same quality
+
 ## 1.14.0
 
 - **Enhance voice** (Audio panel): one switch cleans up your microphone. It removes rumble, adds clarity, evens out loud and quiet words, and brings the level up. Your original recording isn't changed

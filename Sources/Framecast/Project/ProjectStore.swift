@@ -302,20 +302,18 @@ enum Thumbnailer {
 /// Save panels for exports: Finder-safe names, starting in the last folder used (the Exports folder at first).
 @MainActor
 enum SavePanels {
-    private static let key = "export.lastDirectory"
 
     /// "Recording 17.10.2026 at 14:13" → "Recording 17.10.2026 at 14.13" (Finder shows ":" as "/").
     nonisolated static func safeName(_ name: String) -> String {
         name.replacingOccurrences(of: ":", with: ".").replacingOccurrences(of: "/", with: "-")
     }
 
+    /// Where save panels start: the export folder from Settings → Export (your Movies folder unless changed).
+    /// You can still pick any folder in the panel; that choice is just for that export.
     static var directory: URL {
-        if let path = UserDefaults.standard.string(forKey: key), FileManager.default.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        let dir = ProjectLibrary.shared.exportsFolder
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        let path = AppSettings.shared.exportFolder
+        if FileManager.default.fileExists(atPath: path) { return URL(fileURLWithPath: path, isDirectory: true) }
+        return FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
     }
 
     static func make(name: String, ext: String, types: [UTType]) -> NSSavePanel {
@@ -327,10 +325,9 @@ enum SavePanels {
         return panel
     }
 
-    /// Runs the panel and remembers its folder. Returns nil if cancelled.
+    /// Runs the panel. Returns nil if cancelled.
     static func run(_ panel: NSSavePanel) -> URL? {
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: key)
         return url
     }
 }

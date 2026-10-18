@@ -269,6 +269,26 @@ private struct ExportSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Save exports to", systemImage: "folder").font(.system(size: 14, weight: .medium))
+                    Text((app.exportFolder as NSString).abbreviatingWithTildeInPath)
+                        .font(.system(size: 12)).foregroundStyle(Theme.textDim)
+                    Text("Where the save window opens. You can still choose any folder when you export.")
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
+                }
+                Spacer()
+                Button("Change…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.canCreateDirectories = true
+                    panel.directoryURL = URL(fileURLWithPath: app.exportFolder)
+                    if panel.runModal() == .OK, let url = panel.url { app.exportFolder = url.path }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+            Divider()
             Label("Quick export settings", systemImage: "square.and.arrow.up").font(.system(size: 14, weight: .medium))
             Text("Used as the defaults in the export window and by the quick export widget.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textDim)

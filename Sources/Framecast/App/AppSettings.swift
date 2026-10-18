@@ -14,6 +14,8 @@ final class AppSettings: ObservableObject {
     @Published var launchView: LaunchView { didSet { d.set(launchView.rawValue, forKey: "app.launchView") } }
     @Published var appearance: AppAppearance { didSet { d.set(appearance.rawValue, forKey: "app.appearance"); applyAppearance() } }
     @Published var hideDockIcon: Bool { didSet { d.set(hideDockIcon, forKey: "app.hideDock"); WindowManager.shared.updateDockIcon(); MenuBarController.shared.update() } }
+    /// The folder export save panels open in (your Movies folder by default).
+    @Published var exportFolder: String { didSet { d.set(exportFolder, forKey: "app.exportFolder") } }
     @Published var showWaveform: Bool { didSet { d.set(showWaveform, forKey: "app.waveform") } }
     @Published var showMenuBarIcon: Bool { didSet { d.set(showMenuBarIcon, forKey: "app.menuBarIcon"); MenuBarController.shared.update() } }
 
@@ -69,6 +71,8 @@ final class AppSettings: ObservableObject {
         hideDockIcon = d.bool(forKey: "app.hideDock")
         showMenuBarIcon = d.bool(forKey: "app.menuBarIcon")
         showWaveform = d.bool(forKey: "app.waveform")
+        exportFolder = d.string(forKey: "app.exportFolder")
+            ?? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].path
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
         highlightRecordedArea = d.bool(forKey: "app.highlightArea")
         recordFramecastWindows = d.bool(forKey: "app.recordOwnWindows")
