@@ -36,6 +36,8 @@ final class Updater: ObservableObject {
         case idle, checking, upToDate
         case downloading(Double)
         case installing
+        /// Downloaded and verified; waiting for the user to restart (or to quit, which installs it too).
+        case ready
         case failed(String)
     }
 
@@ -121,6 +123,7 @@ final class Updater: ObservableObject {
     /// A manual check opens the update window with its result.
     func check(manual: Bool) async {
         if case .downloading = phase { return }
+        if phase == .ready { if manual { showWindow() }; return }
         if phase == .checking || phase == .installing { return }
         phase = .checking
         if manual { showWindow() }
@@ -224,7 +227,12 @@ final class Updater: ObservableObject {
         Task.detached(priority: .userInitiated) {
             do {
                 let staged = try Self.prepare(file: file, release: release, asset: asset)
-                await MainActor.run { self.install(staged: staged, zip: file) }
+                await MainActor.run {
+                    // Ready: ask before restarting, so nothing closes while you're in the middle of something.
+                    self.pending = staged
+                    self.phase = .ready
+                    self.showWindow()
+                }
             } catch {
                 await MainActor.run { self.phase = .failed(error.localizedDescription) }
             }
@@ -288,8 +296,26 @@ final class Updater: ObservableObject {
         return p.terminationStatus
     }
 
-    /// Swaps the new bundle in once the app has quit, then starts it.
-    private func install(staged: URL, zip: URL) {
+    /// The verified new version, waiting to be swapped in.
+    private var pending: URL?
+
+    /// "Restart Now": saves, quits, installs the update and opens the new version.
+    func restartNow() {
+        guard let staged = pending else { return }
+        WindowManager.shared.saveAll()
+        install(staged: staged, relaunch: true)
+    }
+
+    /// Called as Framecast quits: an update that's ready but wasn't restarted for gets installed now,
+    /// without reopening, so the next launch is the new version.
+    func installPendingOnQuit() {
+        guard phase == .ready, let staged = pending, !RecordingCoordinator.shared.isActive else { return }
+        pending = nil
+        install(staged: staged, relaunch: false)
+    }
+
+    /// Swaps the new bundle in once the app has quit, then (optionally) starts it.
+    private func install(staged: URL, relaunch: Bool) {
         guard !RecordingCoordinator.shared.isActive else {
             phase = .failed("A recording started while the update downloaded. Finish it, then choose Update Now again.")
             return
@@ -314,14 +340,14 @@ final class Updater: ObservableObject {
         if ditto \(q(staged)) \(q(next)) && mv \(q(app)) \(q(old)); then
           if mv \(q(next)) \(q(app)); then
             rm -rf \(q(old))
-            open \(q(app))
+            \(relaunch ? "open \(q(app))" : ":")
             exit 0
           fi
           mv \(q(old)) \(q(app))
         fi
         rm -rf \(q(next))
         ditto \(q(staged)) \(q(rescue)) && open -R \(q(rescue))
-        open \(q(app))
+        \(relaunch ? "open \(q(app))" : ":")
         """
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -333,7 +359,10 @@ final class Updater: ObservableObject {
             phase = .failed("Couldn't start the installer: \(error.localizedDescription)")
             return
         }
-        NSApp.terminate(nil)
+        if relaunch {
+            phase = .installing
+            NSApp.terminate(nil)
+        }
     }
 
     /// Whether this copy is signed with the release certificate (not a local development build).
@@ -417,6 +446,7 @@ struct UpdateView: View {
     }
 
     private var title: String {
+        if updater.phase == .ready { return "Update ready" }
         if updater.release != nil { return "Update available" }
         switch updater.phase {
         case .checking: return "Checking for updates…"
@@ -456,9 +486,29 @@ struct UpdateView: View {
                     ProgressView().controlSize(.small)
                     Text("Installing… Framecast will restart.").font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
                 }
+            case .ready:
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 20)).foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Restart Framecast to start using version \(release.version) and its new features.")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Text("Your projects are saved first. If you choose Later, the update installs the next time you quit Framecast.")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("Later") { updater.closeWindow() }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .keyboardShortcut(.cancelAction)
+                    Button("Restart Now") { updater.restartNow() }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .keyboardShortcut(.defaultAction)
+                }
             default:
                 Text(updater.canInstall
-                     ? "Framecast will close, install the update and open again. Your projects are saved first."
+                     ? "Framecast downloads the update in the background. When it's ready, you choose when to restart."
                      : "This copy can't update itself, so the download page will open.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
                     .fixedSize(horizontal: false, vertical: true)

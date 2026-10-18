@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.15.1
+
+- When an update has downloaded, Framecast asks you to restart to use the new version, instead of closing by itself. Choose Restart Now, or Later: the update then installs the next time you quit Framecast
+
 ## 1.15.0
 
 **Zoom animation, tuned with research and Screen Studio's measured motion**
