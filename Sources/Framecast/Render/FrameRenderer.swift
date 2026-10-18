@@ -178,7 +178,12 @@ final class FrameRenderer: @unchecked Sendable {
         // Image overlays sit on the canvas, like titles.
         for (e, a) in active where e.kind == .image {
             if let img = model.overlayImages[e.imageFile] {
-                out = imageOverlay(img, effect: e, alpha: a, size: size, unit: L.unit).composited(over: out)
+                let layer = imageOverlay(img, effect: e, alpha: a, size: size, unit: L.unit)
+                switch e.imageBlend {
+                case .normal: out = layer.composited(over: out)
+                case .multiply: out = layer.applyingFilter("CIMultiplyBlendMode", parameters: [kCIInputBackgroundImageKey: out])
+                case .screen: out = layer.applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: out])
+                }
             }
         }
 
@@ -402,29 +407,58 @@ final class FrameRenderer: @unchecked Sendable {
         return withAlpha(words.composited(over: bg), CGFloat(alpha))
     }
 
-    /// An image placed on the canvas: centred on textX/textY (top-left), with rounded corners and a shadow.
+    /// An image placed on the canvas: centred on textX/textY (top-left), with rounded corners, an optional border,
+    /// shadow, rotation and flip, and its own entrance animation.
     private func imageOverlay(_ source: CIImage, effect e: EffectSegment, alpha: Double, size: CGSize, unit: CGFloat) -> CIImage {
         let ext = source.extent
         guard ext.width > 0, ext.height > 0 else { return .empty() }
-        let w = CGFloat(e.imageWidth) * size.width
+        // Entrance / exit: `alpha` is the effect's fade envelope (0 → 1 → 0).
+        var scaleK: CGFloat = 1, dy: CGFloat = 0, opacity = CGFloat(e.imageOpacity)
+        switch e.imageAnimation {
+        case .fade: dy = -CGFloat(1 - alpha) * 16 * unit; opacity *= CGFloat(alpha)
+        case .pop:
+            // Grows from 80% with a little overshoot.
+            let p = alpha
+            scaleK = CGFloat(0.8 + 0.2 * p + 0.08 * sin(.pi * p) * (p < 1 ? 1 : 0))
+            opacity *= CGFloat(min(1, alpha * 1.6))
+        case .slide: dy = -CGFloat(1 - alpha) * 60 * unit; opacity *= CGFloat(alpha)
+        case .none: opacity *= alpha > 0.02 ? 1 : 0
+        }
+        let w = CGFloat(e.imageWidth) * size.width * scaleK
         let k = w / ext.width
         let h = ext.height * k
-        let x = CGFloat(e.textX) * size.width - w / 2
-        let y = (1 - CGFloat(e.textY)) * size.height - h / 2 - CGFloat(1 - alpha) * 16 * unit
-        let rect = CGRect(x: x, y: y, width: w, height: h)
-        var img = source.transformed(by: CGAffineTransform(translationX: -ext.minX, y: -ext.minY))
-            .transformed(by: CGAffineTransform(scaleX: k, y: k))
-            .transformed(by: CGAffineTransform(translationX: x, y: y))
-        let radius = CGFloat(e.imageCorner) * unit
+        let cx = CGFloat(e.textX) * size.width
+        let cy = (1 - CGFloat(e.textY)) * size.height + dy
+        let rect = CGRect(x: -w / 2, y: -h / 2, width: w, height: h) // centred on the origin; placed after rotating
+        var img = source.transformed(by: CGAffineTransform(translationX: -ext.midX, y: -ext.midY))
+        if e.imageFlip { img = img.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
+        img = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+        let radius = min(CGFloat(e.imageCorner) * unit, min(w, h) / 2)
         if radius > 0.5 {
             img = img.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: roundedRect(rect, radius: radius)])
+        } else {
+            img = img.cropped(to: rect)
         }
-        if e.imageShadow {
-            let shadow = roundedRect(rect.offsetBy(dx: 0, dy: -8 * unit), radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+        if e.imageBorder > 0.1 {
+            let bw = CGFloat(e.imageBorder) * unit
+            let c = e.imageBorderColor
+            let ring = roundedRect(rect.insetBy(dx: -bw, dy: -bw), radius: radius + bw, color: CIColor(red: c.r, green: c.g, blue: c.b))
+                .applyingFilter("CISourceOutCompositing", parameters: [kCIInputBackgroundImageKey: roundedRect(rect, radius: radius)])
+            img = img.composited(over: ring)
+        }
+        let strength = e.imageShadow ? e.imageShadowStrength : 0
+        if strength > 0.01 {
+            let pad = CGFloat(e.imageBorder) * unit
+            let shadow = roundedRect(rect.insetBy(dx: -pad, dy: -pad).offsetBy(dx: 0, dy: -8 * unit), radius: radius + pad,
+                                     color: CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(min(1, strength))))
                 .applyingGaussianBlur(sigma: Double(18 * unit))
             img = img.composited(over: shadow)
         }
-        return withAlpha(img, CGFloat(alpha))
+        if abs(e.imageRotation) > 0.05 {
+            img = img.transformed(by: CGAffineTransform(rotationAngle: -CGFloat(e.imageRotation) * .pi / 180))
+        }
+        img = img.transformed(by: CGAffineTransform(translationX: cx, y: cy))
+        return withAlpha(img, opacity)
     }
 
     private func spotlight(_ base: CIImage, hole: CGRect, dim: Double, canvas: CGRect, unit: CGFloat) -> CIImage {

@@ -97,6 +97,33 @@ struct Chapter: Codable, Identifiable, Equatable {
     var title: String
 }
 
+/// How an image overlay appears and disappears.
+enum ImageAnimation: String, Codable, CaseIterable, Identifiable {
+    case fade, pop, slide, none
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .fade: return "Fade"
+        case .pop: return "Pop"
+        case .slide: return "Slide up"
+        case .none: return "None"
+        }
+    }
+}
+
+/// How an image overlay mixes with the video under it.
+enum ImageBlend: String, Codable, CaseIterable, Identifiable {
+    case normal, multiply, screen
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .multiply: return "Multiply"
+        case .screen: return "Screen"
+        }
+    }
+}
+
 /// What's behind a full-screen text slide.
 enum SlideBackground: String, Codable, CaseIterable, Identifiable {
     case wallpaper, blur, color
@@ -378,6 +405,16 @@ struct EffectSegment: Codable, Identifiable, Equatable {
     var imageWidth: Double = 0.3
     var imageCorner: Double = 14
     var imageShadow = true
+    var imageShadowStrength: Double = 0.35
+    var imageOpacity: Double = 1
+    /// Degrees, clockwise.
+    var imageRotation: Double = 0
+    /// Border width in 1080p pixels (0 = none) and colour.
+    var imageBorder: Double = 0
+    var imageBorderColor = RGBA(hex: 0xFFFFFF)
+    var imageFlip = false
+    var imageAnimation: ImageAnimation = .fade
+    var imageBlend: ImageBlend = .normal
     /// Arrows and shapes, drawn on the recording in the effect's area.
     var shape: AnnotationShape = .arrow
     var arrowDirection: ArrowDirection = .downRight
@@ -427,6 +464,14 @@ struct EffectSegment: Codable, Identifiable, Equatable {
         imageWidth = (try? c.decodeIfPresent(Double.self, forKey: .imageWidth)) ?? 0.3
         imageCorner = (try? c.decodeIfPresent(Double.self, forKey: .imageCorner)) ?? 14
         imageShadow = (try? c.decodeIfPresent(Bool.self, forKey: .imageShadow)) ?? true
+        imageShadowStrength = (try? c.decodeIfPresent(Double.self, forKey: .imageShadowStrength)) ?? 0.35
+        imageOpacity = (try? c.decodeIfPresent(Double.self, forKey: .imageOpacity)) ?? 1
+        imageRotation = (try? c.decodeIfPresent(Double.self, forKey: .imageRotation)) ?? 0
+        imageBorder = (try? c.decodeIfPresent(Double.self, forKey: .imageBorder)) ?? 0
+        imageBorderColor = (try? c.decodeIfPresent(RGBA.self, forKey: .imageBorderColor)) ?? RGBA(hex: 0xFFFFFF)
+        imageFlip = (try? c.decodeIfPresent(Bool.self, forKey: .imageFlip)) ?? false
+        imageAnimation = (try? c.decodeIfPresent(ImageAnimation.self, forKey: .imageAnimation)) ?? .fade
+        imageBlend = (try? c.decodeIfPresent(ImageBlend.self, forKey: .imageBlend)) ?? .normal
         shape = (try? c.decodeIfPresent(AnnotationShape.self, forKey: .shape)) ?? .arrow
         arrowDirection = (try? c.decodeIfPresent(ArrowDirection.self, forKey: .arrowDirection)) ?? .downRight
         strokeColor = (try? c.decodeIfPresent(RGBA.self, forKey: .strokeColor)) ?? RGBA(hex: 0xFF453A)

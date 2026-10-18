@@ -2,6 +2,14 @@
 
 ## 1.15.3
 
+**More image settings** (Effect → Image)
+- Position presets: put the image in any of nine spots with one click
+- Rotation (with reset) and flip
+- Opacity
+- A border in any colour, and a shadow you can make stronger, lighter or turn off
+- How it appears: Fade, Pop, Slide up or None
+- Blend modes: Multiply drops white backgrounds (black logos), Screen drops black ones (light logos, glows)
+
 - Fixed: some places in macOS (Storage settings, the screen-sharing panel) still showed Framecast's first icon. The icon file now has a new name, so macOS picks up the current one
 
 ## 1.15.2

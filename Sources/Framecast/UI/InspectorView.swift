@@ -1048,11 +1048,7 @@ private struct EffectDetail: View {
                             if let f = model.chooseOverlayImage() { model.updateEffect(effect.id) { $0.imageFile = f } }
                         } label: { Label("Replace Image…", systemImage: "photo.on.rectangle") .frame(maxWidth: .infinity) }
                             .buttonStyle(SecondaryButtonStyle())
-                        LabeledSlider(label: "Size", value: binding(\.imageWidth, key: "iw"), range: 0.05...1,
-                                      format: { "\(Int($0 * 100))%" })
-                        LabeledSlider(label: "Corners", value: binding(\.imageCorner, key: "ic"), range: 0...60,
-                                      format: { "\(Int($0))" })
-                        ToggleRow(label: "Shadow", isOn: binding(\.imageShadow, key: "ish"))
+                        ImageOverlaySettings(model: model, effect: effect)
                         note("A logo, screenshot or sticker over the video. Drag it on the video to place it; drag the corner to resize.")
                     case .annotation:
                         RegionPicker(model: model, effect: effect, tint: TimelineView.effectColor(.annotation))
@@ -1443,5 +1439,87 @@ private struct ChapterRow: View {
                 .accessibilityLabel("Delete chapter")
         }
         .onAppear { title = chapter.title }
+    }
+}
+
+/// Everything about an image overlay: where it sits, its size and angle, how it looks, and how it appears.
+private struct ImageOverlaySettings: View {
+    @ObservedObject var model: EditorModel
+    let effect: EffectSegment
+
+    private func binding<T>(_ kp: WritableKeyPath<EffectSegment, T>, key: String, coalesce: Bool = true) -> Binding<T> {
+        Binding(get: { effect[keyPath: kp] },
+                set: { v in model.updateEffect(effect.id, coalesce: coalesce ? "\(key)-\(effect.id)" : nil) { $0[keyPath: kp] = v } })
+    }
+
+    /// Places the image in one of nine spots, a small margin in from the edges.
+    private func place(column: Int, row: Int) {
+        let ext = model.renderModel?.overlayImages[effect.imageFile]?.extent ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let halfW = effect.imageWidth / 2
+        let halfH = effect.imageWidth * Double(ext.height / max(ext.width, 1)) * Double(model.outputAspect) / 2
+        let mx = 0.04, my = 0.04 * Double(model.outputAspect)
+        let x = [mx + halfW, 0.5, 1 - mx - halfW][column]
+        let y = [my + halfH, 0.5, 1 - my - halfH][row]
+        model.updateEffect(effect.id) { $0.textX = x; $0.textY = y }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Position").font(.system(size: 12))
+                HStack(alignment: .top, spacing: 14) {
+                    // A 3×3 grid of spots: top-left … bottom-right.
+                    VStack(spacing: 4) {
+                        ForEach(0..<3) { row in
+                            HStack(spacing: 4) {
+                                ForEach(0..<3) { col in
+                                    Button { place(column: col, row: row) } label: {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Theme.fill.opacity(0.08))
+                                            .overlay(Circle().fill(Theme.accent.opacity(0.8)).frame(width: 6, height: 6))
+                                            .frame(width: 26, height: 18)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(["Top", "Middle", "Bottom"][row] + " " + ["left", "centre", "right"][col])
+                                }
+                            }
+                        }
+                    }
+                    Text("Pick a spot, or drag the image on the video.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            LabeledSlider(label: "Size", value: binding(\.imageWidth, key: "iw"), range: 0.05...1,
+                          format: { "\(Int($0 * 100))%" })
+            LabeledSlider(label: "Rotation", value: binding(\.imageRotation, key: "irot"), range: -180...180,
+                          format: { "\(Int($0))°" }, reset: 0)
+            ToggleRow(label: "Flip horizontally", isOn: binding(\.imageFlip, key: "iflip", coalesce: false))
+            LabeledSlider(label: "Opacity", value: binding(\.imageOpacity, key: "iop"), range: 0.05...1,
+                          format: { "\(Int($0 * 100))%" }, reset: 1)
+            LabeledSlider(label: "Corners", value: binding(\.imageCorner, key: "ic"), range: 0...60,
+                          format: { "\(Int($0))" }, reset: 14)
+            LabeledSlider(label: "Border", value: binding(\.imageBorder, key: "ib"), range: 0...20,
+                          format: { $0 < 0.1 ? "None" : "\(Int($0))" }, reset: 0)
+            if effect.imageBorder > 0.1 {
+                SwatchRow(colors: TitleStyle.palette, selection: effect.imageBorderColor, allowsAuto: false) { c in
+                    if let c { model.updateEffect(effect.id) { $0.imageBorderColor = c } }
+                }
+            }
+            LabeledSlider(label: "Shadow", value: Binding(get: { effect.imageShadow ? effect.imageShadowStrength : 0 }, set: { v in
+                model.updateEffect(effect.id, coalesce: "ishs-\(effect.id)") { $0.imageShadowStrength = v; $0.imageShadow = v > 0.01 }
+            }), range: 0...1, format: { $0 < 0.01 ? "None" : "\(Int($0 * 100))%" }, reset: 0.35)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Appears with").font(.system(size: 12))
+                PillPicker(options: ImageAnimation.allCases, selection: binding(\.imageAnimation, key: "ianim", coalesce: false), label: \.label)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Blend").font(.system(size: 12))
+                PillPicker(options: ImageBlend.allCases, selection: binding(\.imageBlend, key: "iblend", coalesce: false), label: \.label)
+                Text(effect.imageBlend == .multiply ? "Multiply drops white backgrounds — good for black logos on light screens."
+                     : effect.imageBlend == .screen ? "Screen drops black backgrounds — good for light logos and glows."
+                     : "The image as it is.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
