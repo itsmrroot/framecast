@@ -111,7 +111,10 @@ final class EditorModel: ObservableObject {
 
     private func load() async {
         do {
-            let assets = try await ProjectAssets.load(folder: folder, info: doc.info)
+            if doc.style.enhanceVoice, doc.info.hasMic, VoiceEnhancer.existing(in: folder) == nil {
+                _ = try? await VoiceEnhancer.process(folder: folder)
+            }
+            let assets = try await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice)
             self.assets = assets
             // Keep the document in sync with the real file length.
             if abs(assets.screenDuration - doc.info.duration) > 0.05 {
@@ -564,7 +567,8 @@ final class EditorModel: ObservableObject {
     }
 
     func regenerateAutoZooms() {
-        let generated = ZoomGenerator.generate(from: cursorTrack.clicks, duration: sourceDuration, scale: doc.style.defaultZoomScale)
+        let generated = ZoomGenerator.generate(from: cursorTrack.clicks, duration: sourceDuration, scale: doc.style.defaultZoomScale,
+                                               samples: cursorTrack.samples)
         edit(.render) { d in
             let manual = d.zooms.filter { !$0.isAuto }
             let auto = generated.filter { g in !manual.contains { $0.start < g.end && g.start < $0.end } }
@@ -667,6 +671,35 @@ final class EditorModel: ObservableObject {
     }
 
     /// The split tool: cuts straight down through the clip, zooms and effects at a source time.
+    // MARK: - Voice
+
+    @Published private(set) var enhancingVoice = false
+
+    /// Turns "Enhance voice" on or off: makes the cleaned-up microphone track the first time, then swaps it in.
+    func setEnhanceVoice(_ on: Bool) {
+        edit(.render) { $0.style.enhanceVoice = on }
+        Task { @MainActor in
+            if on && VoiceEnhancer.existing(in: folder) == nil {
+                enhancingVoice = true
+                do { _ = try await VoiceEnhancer.process(folder: folder) } catch {
+                    enhancingVoice = false
+                    notify(error.localizedDescription)
+                    edit(.render) { $0.style.enhanceVoice = false }
+                    return
+                }
+                enhancingVoice = false
+            }
+            await reloadAssets()
+        }
+    }
+
+    /// Reloads the recording's files (e.g. after switching to the enhanced microphone track) and rebuilds.
+    private func reloadAssets() async {
+        guard let a = try? await ProjectAssets.load(folder: folder, info: doc.info, enhancedMic: doc.style.enhanceVoice) else { return }
+        assets = a
+        rebuildComposition()
+    }
+
     // MARK: - Freeze frames, slides, chapters
 
     /// Holds the frame at `t` (source time) still for `seconds`, splitting the clip around it. Returns the freeze clip.

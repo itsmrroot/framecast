@@ -215,6 +215,9 @@ private struct RecordingSettings: View {
                       detail: "Dims the parts of the screen that aren't being recorded.", isOn: $app.highlightRecordedArea)
         SettingToggle(title: "Create zooms automatically",
                       detail: "Adds zooms around your clicks in every new recording.", isOn: $rec.autoZoom)
+        SettingToggle(title: "Keep Framecast's windows in recordings",
+                      detail: "Normally Framecast hides its windows while you record. Turn this on to record a tutorial about Framecast itself.",
+                      isOn: $app.recordFramecastWindows)
         SettingToggle(title: "Show recording widget",
                       detail: "Shows the floating timer with stop, pause, restart and cancel while recording.", isOn: $app.showRecordingWidget)
         SettingToggle(title: "Show camera preview",

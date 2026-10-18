@@ -242,6 +242,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
+            w.collectionBehavior.insert(.moveToActiveSpace) // reappear on the Space you're on, not the one it was left on
             w.minSize = NSSize(width: 860, height: 560)
             w.backgroundColor = Theme.nsBg
             w.contentView = NSHostingView(rootView: HomeView())
@@ -268,6 +269,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
+            w.collectionBehavior.insert(.moveToActiveSpace)
             w.backgroundColor = Theme.nsBg
             w.contentView = NSHostingView(rootView: SettingsWindowView())
             w.center()

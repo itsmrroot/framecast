@@ -53,7 +53,9 @@ struct EditMap {
 
 enum ZoomGenerator {
     /// Builds zoom segments around clusters of clicks, like Screen Studio's automatic zoom.
-    static func generate(from clicks: [ClickEvent], duration: Double, scale: Double) -> [ZoomSegment] {
+    /// With `samples`, a zoom stays in while you keep moving the cursor after the last click (up to 8 s more),
+    /// so the camera follows the whole movement instead of zooming out halfway through.
+    static func generate(from clicks: [ClickEvent], duration: Double, scale: Double, samples: [CursorSample] = []) -> [ZoomSegment] {
         let times = clicks.filter { $0.button == 0 }.map(\.t).sorted()
         guard !times.isEmpty else { return [] }
 
@@ -69,7 +71,8 @@ enum ZoomGenerator {
         var segs: [ZoomSegment] = []
         for (first, last) in groups {
             var start = max(0, first - 0.6)
-            var end = min(duration, last + 2.6)
+            var end = min(duration, max(last + 2.6, activeUntil(after: last, samples: samples) + 1.0, 0) )
+            end = min(end, last + 8, duration)
             if end - start < 2.0 { end = min(duration, start + 2.0) }
             if let prev = segs.last, start - prev.end < 1.2 {
                 segs[segs.count - 1].end = end
@@ -79,6 +82,22 @@ enum ZoomGenerator {
             segs.append(ZoomSegment(start: start, end: end, scale: scale, mode: .followCursor, isAuto: true))
         }
         return segs
+    }
+}
+
+extension ZoomGenerator {
+    /// When the cursor last moved before pausing for 1.2 s, starting at `t`. Returns `t` without samples.
+    static func activeUntil(after t: Double, samples: [CursorSample], pause: Double = 1.2) -> Double {
+        guard !samples.isEmpty else { return t }
+        // Movement is measured from where the cursor last settled, so slow, steady drags count too.
+        var lastMove = t
+        var anchor: CursorSample?
+        for s in samples where s.t > t {
+            guard let a = anchor else { anchor = s; continue }
+            if hypot(s.x - a.x, s.y - a.y) > 0.01 { lastMove = s.t; anchor = s }
+            if s.t - lastMove > pause { break }
+        }
+        return lastMove
     }
 }
 

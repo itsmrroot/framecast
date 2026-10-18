@@ -107,6 +107,42 @@ enum SelfTest {
         check(quiet.count == 1 && abs(quiet[0].0 - 3.2) < 0.01 && abs(quiet[0].1 - 5.8) < 0.01, "silent pause found and trimmed (\(quiet))")
         let fx = try? JSONDecoder().decode(EffectSegment.self, from: Data(#"{"kind":"annotation","start":0,"end":2,"shape":"spiral"}"#.utf8))
         check(fx?.shape == .arrow && fx?.strokeWidth == 6, "arrow: unknown shape falls back, defaults kept")
+        // Enhance voice: a quiet, rumbly "voice" comes out louder and the same length.
+        do {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fc-voice-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let fmt = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+            let n = AVAudioFrameCount(48_000 * 2)
+            let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: n)!
+            buf.frameLength = n
+            for i in 0..<Int(n) {
+                let t = Double(i) / 48_000
+                // 220 Hz "voice" with harmonics at about -26 dB, plus 40 Hz rumble.
+                let v = 0.05 * sin(2 * .pi * 220 * t) + 0.02 * sin(2 * .pi * 660 * t) + 0.03 * sin(2 * .pi * 40 * t)
+                buf.floatChannelData![0][i] = Float(v)
+            }
+            let mic = dir.appendingPathComponent(ProjectFiles.mic)
+            do { // the file is finished when the writer goes away
+                let f = try AVAudioFile(forWriting: mic, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 1],
+                                        commonFormat: .pcmFormatFloat32, interleaved: false)
+                try f.write(from: buf)
+            }
+            let out = try await VoiceEnhancer.process(folder: dir)
+            let r = try AVAudioFile(forReading: out)
+            let rb = AVAudioPCMBuffer(pcmFormat: r.processingFormat, frameCapacity: AVAudioFrameCount(r.length))!
+            try r.read(into: rb)
+            var peak: Float = 0
+            for i in 0..<Int(rb.frameLength) { peak = max(peak, abs(rb.floatChannelData![0][i])) }
+            check(peak > 0.3 && abs(Double(r.length) / r.fileFormat.sampleRate - 2) < 0.1 && VoiceEnhancer.existing(in: dir) != nil,
+                  "enhance voice: louder (peak \(String(format: "%.2f", peak))) and same length")
+        } catch {
+            check(false, "enhance voice: \(error.localizedDescription)")
+        }
+        // A click, then the cursor keeps moving for 4 s: the zoom stays in until it stops (plus a second).
+        let moving = (0..<300).map { i in CursorSample(t: 1 + Double(i) / 60, x: 0.2 + Double(min(i, 240)) * 0.002, y: 0.5) }
+        let follow = ZoomGenerator.generate(from: [ClickEvent(t: 1, x: 0.2, y: 0.5, button: 0)], duration: 20, scale: 2, samples: moving)
+        check(follow.count == 1 && abs(follow[0].end - 6.0) < 0.1, "zoom stays in while the cursor keeps moving (ends \(follow.first.map { String(format: "%.1f", $0.end) } ?? "-"))")
         let held = EditMap(clips: [Clip.freezeFrame(at: 0, seconds: 2), Clip(start: Clip.freezeSliver, end: 3)])
         check(abs(held.duration - (2 + 3 - Clip.freezeSliver)) < 0.001 && held.segments.first?.freeze == true,
               "freeze frame adds its hold time (\(String(format: "%.2f", held.duration))s)")

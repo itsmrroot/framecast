@@ -81,7 +81,7 @@ struct ProjectAssets {
     let micDuration: Double
     let webcamDuration: Double
 
-    static func load(folder: URL, info: RecordingInfo) async throws -> ProjectAssets {
+    static func load(folder: URL, info: RecordingInfo, enhancedMic: Bool = false) async throws -> ProjectAssets {
         let screenAsset = AVURLAsset(url: folder.appendingPathComponent(ProjectFiles.screen),
                                      options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         guard let video = try await screenAsset.loadTracks(withMediaType: .video).first else {
@@ -93,7 +93,7 @@ struct ProjectAssets {
         var mic: AVAssetTrack?
         var micAsset: AVURLAsset?
         var micDuration = 0.0
-        let micURL = folder.appendingPathComponent(ProjectFiles.mic)
+        let micURL = (enhancedMic ? VoiceEnhancer.existing(in: folder) : nil) ?? folder.appendingPathComponent(ProjectFiles.mic)
         if FileManager.default.fileExists(atPath: micURL.path) {
             let a = AVURLAsset(url: micURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             mic = try? await a.loadTracks(withMediaType: .audio).first

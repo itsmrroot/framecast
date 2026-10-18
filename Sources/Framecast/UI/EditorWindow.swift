@@ -31,6 +31,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window.minSize = NSSize(width: 1080, height: 700)
         window.backgroundColor = Theme.nsBg
         window.isReleasedWhenClosed = false
+        // After a recording, the editor opens on the Space you're on, not the one it was last on.
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.tabbingMode = .disallowed
         super.init(window: window)
         window.delegate = self

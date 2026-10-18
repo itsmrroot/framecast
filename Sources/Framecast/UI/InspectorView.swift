@@ -933,6 +933,15 @@ private struct AudioTab: View {
             if model.doc.info.hasMic {
                 LabeledSlider(label: "Microphone", value: model.styleBinding(\.micVolume, key: "micVol"), range: 0...2,
                               format: { "\(Int($0 * 100))%" })
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        ToggleRow(label: "Enhance voice", isOn: Binding(get: { model.doc.style.enhanceVoice },
+                                                                         set: { model.setEnhanceVoice($0) }))
+                        if model.enhancingVoice { ProgressView().controlSize(.small) }
+                    }
+                    Text("Removes rumble, adds clarity and evens out the level of your microphone. Your original recording isn't changed.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Text("Sped-up clips keep their natural pitch.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textFaint)

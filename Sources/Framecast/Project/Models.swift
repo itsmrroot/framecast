@@ -705,6 +705,8 @@ struct Style: Codable, Equatable {
 
     var systemVolume: Double = 1
     var micVolume: Double = 1
+    /// Use the cleaned-up microphone track (VoiceEnhancer).
+    var enhanceVoice = false
 
     static let `default` = Style()
 }

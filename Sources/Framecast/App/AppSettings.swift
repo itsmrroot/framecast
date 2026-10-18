@@ -20,6 +20,8 @@ final class AppSettings: ObservableObject {
     // Recording
     @Published var projectsFolder: String { didSet { d.set(projectsFolder, forKey: "app.projectsFolder") } }
     @Published var highlightRecordedArea: Bool { didSet { d.set(highlightRecordedArea, forKey: "app.highlightArea") } }
+    /// Keep Framecast's own windows on screen (and in the recording), for recording tutorials about Framecast.
+    @Published var recordFramecastWindows: Bool { didSet { d.set(recordFramecastWindows, forKey: "app.recordOwnWindows") } }
     @Published var showRecordingWidget: Bool { didSet { d.set(showRecordingWidget, forKey: "app.recordingWidget") } }
     @Published var cameraResolution: Int { didSet { d.set(cameraResolution, forKey: "app.cameraResolution") } }
     @Published var showCameraPreview: Bool { didSet { d.set(showCameraPreview, forKey: "app.cameraPreview") } }
@@ -69,6 +71,7 @@ final class AppSettings: ObservableObject {
         showWaveform = d.bool(forKey: "app.waveform")
         projectsFolder = d.string(forKey: "app.projectsFolder") ?? movies.appendingPathComponent("Framecast").path
         highlightRecordedArea = d.bool(forKey: "app.highlightArea")
+        recordFramecastWindows = d.bool(forKey: "app.recordOwnWindows")
         showRecordingWidget = d.bool(forKey: "app.recordingWidget")
         cameraResolution = d.integer(forKey: "app.cameraResolution")
         showCameraPreview = d.bool(forKey: "app.cameraPreview")

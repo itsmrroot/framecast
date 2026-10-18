@@ -79,7 +79,7 @@ final class RecordingCoordinator: ObservableObject {
             return
         }
 
-        WindowManager.shared.hideAllForRecording()
+        if !AppSettings.shared.recordFramecastWindows { WindowManager.shared.hideAllForRecording() }
         phase = .countdown
         let go = await Countdown.run(seconds: settings.countdown, on: targetScreen ?? NSScreen.main ?? NSScreen.screens[0])
         guard go else { cancel(); return }
@@ -120,7 +120,9 @@ final class RecordingCoordinator: ObservableObject {
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: settings.kind != .window)
         let pid = ProcessInfo.processInfo.processIdentifier
-        var excluded = content.windows.filter { $0.owningApplication?.processID == pid }
+        // Framecast's own windows stay out of the recording, unless you're recording Framecast itself.
+        // (The toolbar, control bar and other floating panels are always hidden from capture.)
+        var excluded = AppSettings.shared.recordFramecastWindows ? [] : content.windows.filter { $0.owningApplication?.processID == pid }
         if settings.hideDesktopIcons {
             excluded += content.windows.filter {
                 $0.owningApplication?.bundleIdentifier == "com.apple.finder" && $0.windowLayer < 0
@@ -374,7 +376,7 @@ final class RecordingCoordinator: ObservableObject {
         if !keyEvents.isEmpty { ProjectIO.saveKeys(keyEvents, folder: folder) }
         let style = PresetStore.shared.defaultStyle
         let zooms = settings.autoZoom
-            ? ZoomGenerator.generate(from: track.clicks, duration: info.duration, scale: style.defaultZoomScale)
+            ? ZoomGenerator.generate(from: track.clicks, duration: info.duration, scale: style.defaultZoomScale, samples: track.samples)
             : []
         var style2 = style
         if !info.hasCursorData { style2.showCursor = false }

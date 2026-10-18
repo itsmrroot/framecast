@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.14.0
+
+- **Enhance voice** (Audio panel): one switch cleans up your microphone. It removes rumble, adds clarity, evens out loud and quiet words, and brings the level up. Your original recording isn't changed
+- **Zooms follow the whole movement:** an automatic zoom now stays in while you keep moving the cursor after a click (up to 8 s), instead of zooming out halfway through a swipe
+- **Record Framecast itself:** Settings → Recording → "Keep Framecast's windows in recordings", for tutorials about Framecast
+- Windows reopen on the Space you're on after a recording, instead of on another Space
+
 ## 1.13.1
 
 - Fixed: the menu icons didn't show in the released app (apps built with the macOS 26 SDK get text-only menus unless they ask for icons)
