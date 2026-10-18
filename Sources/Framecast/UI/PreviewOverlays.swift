@@ -155,7 +155,7 @@ struct TitleCanvasOverlay: View {
                 .contentShape(Rectangle())
                 // Click (or double-click) the title to type into it; drag to move it.
                 .onTapGesture { beginEditing() }
-                .gesture(DragGesture(minimumDistance: 1)
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("titleCanvas"))
                     .onChanged { v in
                         if startCenter == nil {
                             startCenter = CGPoint(x: frame.midX, y: frame.midY)
@@ -188,6 +188,9 @@ struct TitleCanvasOverlay: View {
                 .allowsHitTesting(false)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
+        // Drags are measured against the whole canvas, which stays still; measured against the moving
+        // title itself, each step was relative to where it had just moved, so it trailed the pointer.
+        .coordinateSpace(name: "titleCanvas")
         .onDisappear {
             if editing { endEditing() }
             if model.hiddenEffect == effect.id { model.hiddenEffect = nil }
@@ -281,7 +284,7 @@ struct ImageCanvasOverlay: View {
                 .background(Color.white.opacity(live == nil ? 0.05 : 0))
                 .frame(width: frame.width, height: frame.height)
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 1)
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("imageCanvas"))
                     .onChanged { v in
                         begin(frame)
                         guard let s = start else { return }
@@ -305,6 +308,9 @@ struct ImageCanvasOverlay: View {
                 .pointerStyle(.frameResize(position: .bottomTrailing))
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
+        // Drags are measured against the whole canvas, which stays still; measured against the moving
+        // title itself, each step was relative to where it had just moved, so it trailed the pointer.
+        .coordinateSpace(name: "imageCanvas")
         .onAppear {
             image = NSImage(contentsOf: model.folder.appendingPathComponent("overlays", isDirectory: true).appendingPathComponent(effect.imageFile))
         }

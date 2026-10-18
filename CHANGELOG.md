@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.1
+
+- Fixed: dragging a title or an image on the video lagged behind the pointer. It now stays exactly under it
+
 ## 1.12.0
 
 Tuned to measurements of Screen Studio, recorded frame by frame side by side.
